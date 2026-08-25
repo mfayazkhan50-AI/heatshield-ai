@@ -9,7 +9,7 @@ Built for the FortyGuard Global AI Hackathon '26 — Track 06 (Agentic AI) × Tr
 
 | | URL |
 |---|---|
-| **Dashboard (frontend)** | https://heatshield-ai.vercel.app |
+| **Dashboard (frontend)** | currently not shared |
 | **API health check** | https://heatshield-ai.up.railway.app/api/health |
 
 > **Note:** Free-tier hosting sleeps when idle — the very first request may take
