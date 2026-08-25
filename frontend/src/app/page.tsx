@@ -452,6 +452,7 @@ export default function Home() {
           {/* COLUMN 3 — Pipeline + Action Plan                         */}
           {/* -------------------------------------------------------- */}
           <section className="col-span-1 flex min-w-0 flex-col gap-4 lg:col-span-5">
+            <ComplianceExportBar output={result ?? null} />
             <ExecutionPipeline
               nodePhases={displayNodePhases}
               log={displayLog}
@@ -461,7 +462,6 @@ export default function Home() {
               apiBaseUrl={API_BASE_URL}
             />
             <ComplianceCards plan={plan} />
-            <ComplianceExportBar output={result ?? null} />
             <TacticalActions
               actions={tacticalActions}
               dispatchRecords={dispatchRecords}
