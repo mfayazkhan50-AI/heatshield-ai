@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { MapPin, PlayCircle, RefreshCw, Zap } from "lucide-react";
 
@@ -10,7 +10,9 @@ import DecisionRationale from "@/components/DecisionRationale";
 import DeveloperAuditPayload from "@/components/DeveloperAuditPayload";
 import ExecutionPipeline from "@/components/ExecutionPipeline";
 import OperationSelector from "@/components/OperationSelector";
+import RadiantZoneSim from "@/components/RadiantZoneSim";
 import ProvenanceFooter from "@/components/ProvenanceFooter";
+import ComplianceExportBar from "@/components/ComplianceExportBar";
 import SimulatedDataBanner from "@/components/SimulatedDataBanner";
 import TacticalActions from "@/components/TacticalActions";
 import TemporalHeatChart from "@/components/TemporalHeatChart";
@@ -197,6 +199,18 @@ export default function Home() {
   const brandTier: RiskTier | null = brandTierFrom(breakdown, result?.risk_level);
   const brand = brandTier ? BRAND_STATUS[brandTier] : null;
 
+  // -------------------------------------------------------------------
+  // Railway backend wake-up ping — fires the instant the page mounts so
+  // the server is live before the user finishes reading the header.
+  // A second staggered ping covers the case where the first arrives
+  // before the Dyno has fully hydrated.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/health`).catch(() => {});
+    const t = setTimeout(() => fetch(`${API_BASE_URL}/api/health`).catch(() => {}), 2500);
+    return () => clearTimeout(t);
+  }, []);
+
   const auditParams = useMemo(
     () => (cachedRun || activeRequest ? buildRequest() : null),
     [cachedRun, activeRequest, buildRequest]
@@ -325,6 +339,12 @@ export default function Home() {
               observedAt={heat.payload?.observed_at ?? result?.observed_at ?? null}
             />
 
+            <RadiantZoneSim
+              breakdown={breakdown}
+              siteName={site.name}
+              operation={operation}
+            />
+
             {fromCache && (
               <div className="flex items-center gap-2 rounded-lg border border-thermal-low/30 bg-thermal-low/5 px-3 py-2 text-xs text-thermal-low">
                 <Zap size={13} className="shrink-0" />
@@ -441,6 +461,7 @@ export default function Home() {
               apiBaseUrl={API_BASE_URL}
             />
             <ComplianceCards plan={plan} />
+            <ComplianceExportBar output={result ?? null} />
             <TacticalActions
               actions={tacticalActions}
               dispatchRecords={dispatchRecords}

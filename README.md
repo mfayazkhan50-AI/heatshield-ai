@@ -7,18 +7,7 @@ Built for the FortyGuard Global AI Hackathon '26 — Track 06 (Agentic AI) × Tr
 
 ## 🔴 Live Demo
 
-| | URL |
-|---|---|
-| **Dashboard (frontend)** | https://heatshield-ai.vercel.app |
-| **API health check** | https://heatshield-ai.up.railway.app/api/health |
-
-> **Note:** Free-tier hosting sleeps when idle — the very first request may take
-> ~30–40s to wake the backend. Every load after that is instant.
-
-**Fastest demo path (no setup, no keys):** open the dashboard → select
-**Thermal, CA** → watch the agent stream end-to-end: hyperlocal thermal field,
-CRITICAL response gap (~8/10), autonomous dry-run dispatch log with full SMS +
-voice-call previews.
+> **Private repository — links withheld until submission.**
 
 ## The pitch
 
@@ -79,13 +68,18 @@ heatshield-ai/
     │   ├── TopBar.tsx                Global RiskTier status propagation (accent line/glow/pill)
     │   ├── ThermalCanvasMap.tsx      CARTO Dark tiles + blended thermal raster (60fps)
     │   ├── TemporalHeatChart.tsx     Zero-dep SVG shift projection chart (OSHA 90°F ref)
+    │   ├── RadiantZoneSim.tsx        Interactive geofence sim (+4°F radiant zone projection)
+    │   ├── ComplianceExportBar.tsx   CSV download + PDF print-report export (zero deps)
     │   ├── DecisionRationale.tsx     "Why Flagged?" verbatim formula audit panel
     │   ├── TacticalActions.tsx       Numbered directives + autonomous dispatch log
     │   └── …                         Gauge, pipeline, compliance cards, BYOK, footer
     ├── src/hooks/
     │   ├── useAgentStream.ts         POST-fetch SSE consumer (param capture, no URL leaks)
     │   └── useHeatmapStream.ts       NDJSON consumer (progress/fallback/cells/result)
-    └── src/lib/                      Shared v2 types, brand tokens, constants
+    └── src/lib/
+        ├── exportUtils.ts            CSV builder + styled print-report generator
+        ├── types.ts                  v2 wire contracts
+        └── constants.ts              Brand tokens, demo sites, provider registry
 ```
 
 ### Agent graph
@@ -141,6 +135,14 @@ rejected cleanly into Tier-5 fallback.
   Live polling budget is env-tunable; degradation is honest (SIMULATED DATA banner),
   never silent.
 - Sliding-window rate limiting on both routes (`RATE_LIMIT_MAX/WINDOW_S`, default 60/min).
+
+### Enterprise features & UX hardening
+
+| Feature | What it does |
+|---|---|
+| **CSV / PDF export** | One-click OSHA compliance log export: CSV (Blob download, Excel/Sheets-ready) and styled print-report PDF via `window.print()`. Zero npm deps. |
+| **Frontend wake-up ping** | Invisible `fetch('/api/health')` on page mount (+ staggered retry) so the Railway/Render backend is live before the user finishes reading the header — eliminates cold-start feel. |
+| **Radiant zone simulation** | Interactive geofence demo button: "Simulate worker entering high radiant zone (+4 °F)". Reuses the production R formula client-side with published weights; shows before/after tier flip + DISPATCH ARMED flash when crossing R ≥ 7.0. Clearly labeled as a projection. |
 
 ## Running locally
 
