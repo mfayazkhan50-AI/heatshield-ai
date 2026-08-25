@@ -1,0 +1,10 @@
+# Secrets & local state
+.env
+*.sqlite
+*.sqlite-journal
+__pycache__/
+.venv/
+
+# Frontend
+node_modules/
+.next/

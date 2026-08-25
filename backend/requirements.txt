@@ -1,0 +1,46 @@
+# ============================================================
+# HeatShield AI — Backend Dependencies (Python 3.11+)
+#
+# Install:
+#   python -m venv .venv
+#   .\.venv\Scripts\activate        # Windows
+#   source .venv/bin/activate       # macOS / Linux
+#   pip install -r requirements.txt
+#
+# Pinned to the exact versions the project was built and tested
+# against. All API keys are optional — see .env.example.
+# ============================================================
+
+# --- Web gateway ---------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+pydantic==2.13.4
+python-dotenv==1.2.2
+
+# --- HTTP client (FortyGuard API · Twilio REST · LLM BYOK) ----
+httpx==0.28.1
+
+# --- LangGraph agent stack ------------------------------------
+langgraph==1.2.10
+langgraph-checkpoint-sqlite==3.1.1
+langchain-core==1.6.0
+
+# --- LLM providers (hosted cascade Tiers 1-3) ------------------
+langchain-groq==1.1.3          # Tiers 1, 2 & BYOK groq
+langchain-google-genai==4.3.5  # Tier 3 & BYOK gemini
+
+# BYOK providers OpenAI / Anthropic / DeepSeek are called over
+# plain httpx against their REST APIs — no extra SDKs required.
+
+# --- Checkpoint persistence (AsyncSqliteSaver) -----------------
+aiosqlite==0.22.1
+
+# --- Production serving (Render/Railway/Fly $PORT) -------------
+gunicorn>=22.0,<24.0
+
+# ============================================================
+# Dev / CI — included by default so judges can run the test
+# suite immediately:  pip install -r requirements.txt
+# ============================================================
+pytest==9.1.1
+pytest-asyncio==1.4.0

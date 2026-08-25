@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: #0a0d0f;
+  color: #e7ecea;
+}
+
+body {
+  background-image:
+    linear-gradient(rgba(38, 49, 47, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(38, 49, 47, 0.35) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-attachment: fixed;
+}
+
+::selection {
+  background: #f59e0b;
+  color: #0a0d0f;
+}
+
+/* Visible keyboard focus everywhere — accessibility floor */
+:focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.font-tabular {
+  font-variant-numeric: tabular-nums;
+}

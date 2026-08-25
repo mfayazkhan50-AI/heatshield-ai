@@ -1,0 +1,26 @@
+# Backend
+.venv/
+**/__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+backend/.env
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env
+frontend/.env*.local
+
+# Universal secret safety net (koi bhi .env kahin bhi na jaye)
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
