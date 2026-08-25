@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Mapping, TypedDict
 logger = logging.getLogger("heatshield.llm_router")
 
 GROQ_MODEL = "openai/gpt-oss-120b"
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"
 
 
 # ---------------------------------------------------------------------------
