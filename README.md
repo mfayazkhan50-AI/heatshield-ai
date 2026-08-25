@@ -5,6 +5,21 @@ Built for the FortyGuard Global AI Hackathon '26 — Track 06 (Agentic AI) × Tr
 
 ![status](https://img.shields.io/badge/tests-106%2F106-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
 
+## 🔴 Live Demo
+
+| | URL |
+|---|---|
+| **Dashboard (frontend)** | https://heatshield-ai.vercel.app |
+| **API health check** | https://heatshield-ai.up.railway.app/api/health |
+
+> **Note:** Free-tier hosting sleeps when idle — the very first request may take
+> ~30–40s to wake the backend. Every load after that is instant.
+
+**Fastest demo path (no setup, no keys):** open the dashboard → select
+**Thermal, CA** → watch the agent stream end-to-end: hyperlocal thermal field,
+CRITICAL response gap (~8/10), autonomous dry-run dispatch log with full SMS +
+voice-call previews.
+
 ## The pitch
 
 Heat is the deadliest weather-related workplace hazard in the U.S., and site managers
