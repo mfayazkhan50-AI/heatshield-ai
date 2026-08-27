@@ -3,7 +3,7 @@
 **Autonomous Heat Intelligence & OSHA Compliance for Outdoor Worksites**
 Built for the FortyGuard Global AI Hackathon '26 — Track 06 (Agentic AI) × Track 03 (Industrial & Enterprise Automation)
 
-![status](https://img.shields.io/badge/tests-106%2F106-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
+![status](https://img.shields.io/badge/tests-112%2F112-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
 
 ## 🔴 Live Demo
 
@@ -173,16 +173,22 @@ if the backend isn't on `localhost:8000`.
 
 ```bash
 cd backend
-pytest                 # 106 tests — scoring math, dispatch gate, rate limits,
-                       # schemas, NDJSON contract, full SSE agent runs
+pytest                 # 112 tests — scoring math, dispatch gate, rate limits,
+                       # schemas, NDJSON contract, live env_params client, SSE runs
 ```
 
-### The zero-key demo path (judges: start here)
+### Demo paths
 
-With **no keys at all**: select **Thermal, CA** → the pipeline streams end-to-end via
-Tier 5, the thermal field renders from the labeled climate-normal synthesizer, the map
-blends CRITICAL crimson over darkened OpenStreetMap streets, the Response Gap shows ~8.1/10, and
-the **Autonomous Dispatch Log** fires 4 dry-run SMS+voice records with full previews.
+**With a FortyGuard key** (`FORTYGUARD_API_KEY` set): the ingest node calls the real
+task-based `POST /v1/env_params`, polls `GET /v1/status/{id}`, and marks the run
+**`SOURCE: FORTYGUARD API (live)`** — the dashboard header, Response Gap, and
+temporal chart all anchor on genuine observed street-level temperature.
+
+**Zero-key fallback (still fully functional):** select **Thermal, CA** → the pipeline
+streams end-to-end via Tier 5, the thermal field renders from the labeled
+climate-normal synthesizer, the map blends CRITICAL crimson over darkened
+OpenStreetMap streets, the Response Gap shows ~8.1/10, and the **Autonomous Dispatch
+Log** fires 4 dry-run SMS+voice records with full previews.
 Add Twilio creds + supervisor numbers in `.env` and the same click goes LIVE.
 
 ## Environment variables (all optional)
@@ -191,7 +197,7 @@ See `backend/.env.example`. Highlights:
 
 | Var | Purpose |
 |---|---|
-| `FORTYGUARD_API_KEY` | Live street-level temperature data |
+| `FORTYGUARD_API_KEY` | tOS Enterprise API key — anchors scoring on REAL observed temperature (blank ⇒ simulated field) |
 | `GROQ_API_KEY_1/2`, `GEMINI_API_KEY` | Hosted cascade tiers |
 | `OBSERVATION_CACHE_PATH` | SQLite cache file (`:memory:` in tests) |
 | `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_S` | API throttling (60/min default) |

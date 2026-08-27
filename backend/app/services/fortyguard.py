@@ -28,7 +28,30 @@ from app.utils.clock import utc_now_iso
 
 logger = logging.getLogger("heatshield.fortyguard")
 
-FORTYGUARD_BASE_URL = "https://api.fortyguard.com/v1/temperature"
+# The current FortyGuard tOS Enterprise API is task-based: you POST a task
+# (e.g. /v1/env_params) and get an activity_id back, then poll
+# GET /v1/status/{activity_id} until the task terminates. Authentication is a
+# plain `api-key` header (no bearer/OAuth). The legacy synchronous
+# GET /v1/temperature/current endpoint no longer exists — that is why naive
+# integrations see 401. See docs-api.fortyguard.com.
+FORTYGUARD_BASE_URL = os.getenv("FORTYGUARD_BASE_URL", "https://api.fortyguard.com")
+
+# Default snapshot date for environmental analysis. The catalog covers
+# 2021 → today. We use "yesterday" so requests are always within coverage.
+import datetime as _dt
+
+_DEFAULT_START_DATE = (
+    (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+)
+_DEFAULT_START_TIME = "15:00"
+
+# env_params task may take seconds-to-minutes to complete — give the live
+# task a dedicated, longer budget than the legacy heatmap poll deadline.
+ENV_SUBMIT_TIMEOUT_S = float(os.getenv("FORTYGUARD_SUBMIT_TIMEOUT_S", "20.0"))
+ENV_POLL_INTERVAL_S = float(os.getenv("FORTYGUARD_POLL_INTERVAL_S", "3.0"))
+ENV_TASK_DEADLINE_S = float(os.getenv("FORTYGUARD_ENV_DEADLINE_S", "120.0"))
+# Single status GET timeout.
+ENV_STATUS_TIMEOUT_S = float(os.getenv("FORTYGUARD_ATTEMPT_TIMEOUT_S", "8.0"))
 
 # Resilience tuning (env-overridable, deterministic defaults)
 POLL_MAX_ATTEMPTS = int(os.getenv("FORTYGUARD_POLL_MAX_ATTEMPTS", "20"))
@@ -218,39 +241,267 @@ async def _maybe_await(result: Any) -> None:
         await result
 
 
+# ---------------------------------------------------------------------------
+# Real live ingestion — FortyGuard tOS Enterprise API (task-based)
+#
+# The current API is asynchronous: POST /v1/env_params (a point analysis that
+# returns, among many parameters, apparent temperature + heat index) to get an
+# activity_id, then poll GET /v1/status/{activity_id} until it terminates.
+# We use this to anchor the deterministic engine on REAL observed conditions,
+# which flips the provenance from "simulated" to "live".
+#
+# The legacy GET /v1/temperature/current path (401/no_such_endpoint) is no
+# longer used for live data; poll_live_frame/heatmap remains the resilient
+# grid path but this env_params flow is what feeds the scoring graph.
+# ---------------------------------------------------------------------------
+
+async def _post_env_params(
+    client: httpx.AsyncClient,
+    api_key: str,
+    lat: float,
+    lon: float,
+    fallback_temp_c: float,
+) -> Optional[str]:
+    """POST /v1/env_params and return the activity_id, or None."""
+    resp = await client.post(
+        f"{FORTYGUARD_BASE_URL}/v1/env_params",
+        headers={"api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "latitude": lat,
+            "longitude": lon,
+            "temperature": fallback_temp_c,
+            "date_time": {
+                "start_date": _DEFAULT_START_DATE,
+                "start_time": _DEFAULT_START_TIME,
+                "filter_type": 1,
+            },
+        },
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    if body.get("error"):
+        raise RuntimeError(body.get("message") or "env_params submission failed")
+    try:
+        return body["data"]["activity_id"]
+    except KeyError as exc:
+        raise RuntimeError(f"Unexpected submission shape: {body}") from exc
+
+
+def _status_is_terminal(status: str) -> str:
+    """Return 'ok', 'failed', or '' (still processing)."""
+    s = (status or "").strip().lower()
+    if s in ("completed", "succeeded", "success"):
+        return "ok"
+    if s in ("failed", "error", "cancelled"):
+        return "failed"
+    return ""
+
+
+async def _poll_env_result(
+    client: httpx.AsyncClient,
+    api_key: str,
+    activity_id: str,
+    on_progress: Optional[ProgressCallback],
+    total_deadline_s: float,
+) -> Dict[str, Any]:
+    """Poll GET /v1/status/{activity_id} until terminal. Returns result dict."""
+    started = time.perf_counter()
+    attempt = 0
+
+    while True:
+        elapsed = time.perf_counter() - started
+        if elapsed >= total_deadline_s:
+            raise TimeoutError(
+                f"FortyGuard env task {activity_id} exceeded {total_deadline_s:.0f}s"
+            )
+
+        attempt += 1
+        if on_progress is not None:
+            await _maybe_await(
+                on_progress(
+                    {
+                        "status": "polling",
+                        "attempt": attempt,
+                        "max": 100,
+                        "elapsed_ms": round(elapsed * 1000.0, 1),
+                        "deadline_s": total_deadline_s,
+                        "phase": "env_params",
+                    }
+                )
+            )
+
+        try:
+            resp = await client.get(
+                f"{FORTYGUARD_BASE_URL}/v1/status/{activity_id}",
+                headers={"api-key": api_key},
+            )
+            if resp.status_code == 404:
+                # Eventual consistency right after submit — keep polling.
+                await asyncio.sleep(ENV_POLL_INTERVAL_S)
+                continue
+            resp.raise_for_status()
+            body = resp.json()
+            data = body.get("data") or {}
+            state = _status_is_terminal(data.get("status", ""))
+            if state == "failed":
+                raise RuntimeError(
+                    f"FortyGuard task {activity_id} failed: {data.get('message') or body}"
+                )
+            if state == "ok":
+                result = data.get("result") or data
+                if isinstance(result, dict):
+                    return result
+                # Some statuses nest the payload under a list/wrapper — be lenient.
+                return {"raw": result}
+        except asyncio.CancelledError:
+            raise
+        except (httpx.TimeoutException, httpx.HTTPError) as exc:
+            logger.warning("FortyGuard status poll attempt %s: %r", attempt, exc)
+        except Exception as exc:
+            logger.warning("FortyGuard status poll attempt %s: %r", attempt, exc)
+
+        await asyncio.sleep(ENV_POLL_INTERVAL_S)
+
+
+def _extract_live_temperatures(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Pull the physically meaningful temperature signal out of the env_params
+    result. The API returns per-location parameter arrays (°C) across the
+    requested window:
+
+        { "metadata": {..., "timestamps": [...]},
+          "locations": [ { "lat":..., "lon":..., "temperature": 40.0,
+                           "parameters": {
+                             "apparent_temperature_celsius": [45.6],
+                             "heat_index_celsius": [37.1],
+                             "relative_humidity_percent": [10.9], ... } } ] }
+
+    The heat-index alone is humidity-pegged (can peak overnight), while
+    apparent_temperature follows the real diurnal cycle — so we anchor on the
+    max apparent temperature (the genuine "hot hour") and record the heat
+    index at that same hour.
+    """
+    locations = result.get("locations")
+    if not isinstance(locations, list) or not locations:
+        return None
+
+    best_apparent: Optional[float] = None
+    best_hi: Optional[float] = None
+    best_air: Optional[float] = None
+    best_rh: Optional[float] = None
+
+    for loc in locations:
+        if not isinstance(loc, dict):
+            continue
+        params = loc.get("parameters") or {}
+        if not isinstance(params, dict):
+            params = {}
+
+        def _max_arr(d: Dict[str, Any], key: str) -> Optional[float]:
+            v = d.get(key)
+            if isinstance(v, list):
+                vals = [x for x in v if isinstance(x, (int, float))]
+                return max(vals) if vals else None
+            if isinstance(v, (int, float)):
+                return float(v)
+            return None
+
+        ap = _max_arr(params, "apparent_temperature_celsius")
+        hi = _max_arr(params, "heat_index_celsius")
+        air = _max_arr(
+            params,
+            "air_temperature_celsius",
+        ) or _max_arr(params, "temperature_celsius")
+        rh = _max_arr(params, "relative_humidity_percent")
+
+        if ap is not None and (best_apparent is None or ap > best_apparent):
+            best_apparent = ap
+            if hi is not None:
+                best_hi = hi
+            if air is not None:
+                best_air = air
+            if rh is not None:
+                best_rh = rh
+
+    if best_apparent is None and best_air is None:
+        return None
+
+    anchor_c = best_apparent if best_apparent is not None else best_air
+    anchor_f = anchor_c * 9.0 / 5.0 + 32.0
+    hi_f = (best_hi * 9.0 / 5.0 + 32.0) if best_hi is not None else anchor_f
+
+    return {
+        "temperature_f": round(anchor_f, 2),
+        "apparent_temp_f": round(anchor_f, 2),
+        "heat_index_f": round(hi_f, 2),
+        "relative_humidity_pct": best_rh if best_rh is not None else 30.0,
+        "solar_load": "high" if anchor_f >= 90.0 else "moderate",
+        "source": "live",
+    }
+
+
+async def fetch_live_env_params(
+    lat: float,
+    lon: float,
+    *,
+    on_progress: Optional[ProgressCallback] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Exception]]:
+    """
+    Pull REAL street-level environmental parameters via the current FortyGuard
+    task-based API. Never raises: returns `(frame, None)` on success or
+    `(None, error)` when the API is unreachable, slow, or malformed, so the
+    deterministic fallback can proceed. frame["source"] == "live".
+    """
+    api_key = os.getenv("FORTYGUARD_API_KEY", "")
+    if not api_key:
+        return None, None
+
+    # Reasonable fallback temp anchor (used only when API omits it); not
+    # surfaced to the user — replaced by the real observed value on success.
+    fallback_temp_c = 40.0
+
+    try:
+        async with httpx.AsyncClient(timeout=ENV_SUBMIT_TIMEOUT_S) as client:
+            activity_id = await _post_env_params(
+                client, api_key, lat, lon, fallback_temp_c
+            )
+            if not activity_id:
+                raise RuntimeError("env_params returned no activity_id")
+
+            result = await _poll_env_result(
+                client,
+                api_key,
+                activity_id,
+                on_progress,
+                total_deadline_s=ENV_TASK_DEADLINE_S,
+            )
+
+        frame = _extract_live_temperatures(result)
+        if frame is None:
+            return None, ValueError("env_params: no usable temperature signal")
+
+        frame["latitude"] = lat
+        frame["longitude"] = lon
+        frame["observed_at"] = utc_now_iso()
+        frame["activity_id"] = activity_id
+        return frame, None
+
+    except Exception as exc:  # noqa: BLE001 — resilient by design
+        logger.warning("Live FortyGuard env_params failed: %r", exc)
+        return None, exc
+
+
 async def fetch_live_frame(
     lat: float,
     lon: float,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Exception]]:
     """
-    Legacy one-shot live call kept for the LangGraph ingest node.
-    Returns `(frame, None)` on success or `(None, error)`. Never raises.
+    One-shot live call used by the LangGraph ingest node. Attempts REAL
+    FortyGuard live data via the current task-based env_params endpoint;
+    falls back to `(None, error)` so the deterministic engine uses the
+    simulated field when live data is unavailable. Never raises.
     """
-    api_key = os.getenv("FORTYGUARD_API_KEY", "")
-
-    if not api_key:
-        return None, None
-
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(
-                f"{FORTYGUARD_BASE_URL}/current",
-                params={"lat": lat, "lon": lon},
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-
-    except Exception as exc:
-        logger.warning("Live FortyGuard call failed: %r", exc)
-        return None, exc
-
-    frame = normalize_payload(payload)
-
-    if frame is None:
-        return None, ValueError("zero_cells_or_malformed_payload")
-
-    return frame, None
+    return await fetch_live_env_params(lat, lon)
 
 
 # ---------------------------------------------------------------------------

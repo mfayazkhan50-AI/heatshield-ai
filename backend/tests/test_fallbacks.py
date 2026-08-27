@@ -272,3 +272,153 @@ class TestDeterministicPlan:
 
         b = deterministic_plan("Danger")
         assert "MUTATED" not in b["monitoring_indicators"]
+
+
+# ---------------------------------------------------------------------------
+# Real live FortyGuard tOS Enterprise API (task-based env_params client)
+# ---------------------------------------------------------------------------
+
+class TestLiveEnvParamsClient:
+    """The current FortyGuard API is task-based: POST /v1/env_params then poll
+    GET /v1/status/{id}. Verify the submit → poll → normalize flow with a fake
+    httpx.AsyncClient so no credits/network are needed."""
+
+    def test_extract_live_temperatures_anchors_on_apparent_peak(self):
+        # Real observed response shape: per-location parameter arrays in °C,
+        # heat index pegged high but apparent temp is the physical hot-hour.
+        result = {
+            "metadata": {
+                "timezone": "GMT-8",
+                "time_range": {"count": 1},
+                "timestamps": ["2026-08-26T15:00:00-08:00"],
+            },
+            "locations": [
+                {
+                    "lat": 33.635,
+                    "lon": -116.135,
+                    "temperature": 40.0,
+                    "parameters": {
+                        "heat_index_celsius": [37.1],
+                        "apparent_temperature_celsius": [45.6],
+                        "relative_humidity_percent": [10.9],
+                    },
+                }
+            ],
+        }
+
+        frame = fortyguard._extract_live_temperatures(result)
+
+        assert frame is not None
+        assert frame["source"] == "live"
+        # Therma1, CA ~15:00 apparent 45.6°C → 114.08°F
+        assert abs(frame["temperature_f"] - 114.08) < 0.01
+        assert abs(frame["heat_index_f"] - (37.1 * 9 / 5 + 32)) < 0.01
+        assert frame["relative_humidity_pct"] == 10.9
+
+    def test_extract_returns_none_when_no_signal(self):
+        assert fortyguard._extract_live_temperatures({"locations": []}) is None
+        assert fortyguard._extract_live_temperatures({"locations": [{"parameters": {}}]}) is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_live_no_key_returns_none(self, monkeypatch):
+        monkeypatch.delenv("FORTYGUARD_API_KEY", raising=False)
+        frame, err = await fortyguard.fetch_live_env_params(33.6, -116.1)
+        assert frame is None
+        assert err is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_live_submit_poll_success(self, monkeypatch):
+        monkeypatch.setenv("FORTYGUARD_API_KEY", "test-key")
+        monkeypatch.setattr(fortyguard, "ENV_TASK_DEADLINE_S", 30.0)
+
+        status_calls = {"n": 0}
+
+        class FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def post(self, *a, **kw):
+                resp = type("R", (), {})()
+                resp.raise_for_status = lambda: None
+                resp.json = lambda: {
+                    "data": {"activity_id": "act-123"}
+                }
+                return resp
+
+            async def get(self, *a, **kw):
+                status_calls["n"] += 1
+                resp = type("R", (), {})()
+                resp.status_code = 200
+                resp.raise_for_status = lambda: None
+                if status_calls["n"] == 1:
+                    resp.json = lambda: {"data": {"status": "Processing"}}
+                else:
+                    resp.json = lambda: {
+                        "data": {
+                            "status": "Completed",
+                            "result": {
+                                "locations": [
+                                    {
+                                        "parameters": {
+                                            "apparent_temperature_celsius": [45.6],
+                                            "heat_index_celsius": [37.1],
+                                            "relative_humidity_percent": [10.9],
+                                        }
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                return resp
+
+        monkeypatch.setattr(fortyguard.httpx, "AsyncClient", lambda *a, **kw: FakeClient())
+
+        frame, err = await fortyguard.fetch_live_env_params(33.6, -116.1)
+
+        assert err is None
+        assert frame is not None
+        assert frame["source"] == "live"
+        assert frame["activity_id"] == "act-123"
+        assert status_calls["n"] == 2  # one Processing + one Completed
+
+    @pytest.mark.asyncio
+    async def test_fetch_live_deadline_falls_back(self, monkeypatch):
+        monkeypatch.setenv("FORTYGUARD_API_KEY", "test-key")
+        monkeypatch.setattr(fortyguard, "ENV_TASK_DEADLINE_S", 0.0)
+
+        class PendingClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def post(self, *a, **kw):
+                resp = type("R", (), {})()
+                resp.raise_for_status = lambda: None
+                resp.json = lambda: {"data": {"activity_id": "act-x"}}
+                return resp
+
+            async def get(self, *a, **kw):
+                resp = type("R", (), {})()
+                resp.status_code = 200
+                resp.raise_for_status = lambda: None
+                resp.json = lambda: {"data": {"status": "Processing"}}
+                return resp
+
+        monkeypatch.setattr(fortyguard.httpx, "AsyncClient", lambda *a, **kw: PendingClient())
+
+        frame, err = await fortyguard.fetch_live_env_params(33.6, -116.1)
+
+        # Never raises; returns the fallback-safe (None, error) pair.
+        assert frame is None
+        assert err is not None
