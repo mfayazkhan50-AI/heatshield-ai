@@ -66,7 +66,7 @@ heatshield-ai/
     ├── src/app/page.tsx              3-column command console + location/op caches
     ├── src/components/
     │   ├── TopBar.tsx                Global RiskTier status propagation (accent line/glow/pill)
-    │   ├── ThermalCanvasMap.tsx      CARTO Dark tiles + blended thermal raster (60fps)
+    │   ├── ThermalCanvasMap.tsx      OSM tiles darkened via canvas filter + blended thermal raster (60fps)
     │   ├── TemporalHeatChart.tsx     Zero-dep SVG shift projection chart (OSHA 90°F ref)
     │   ├── RadiantZoneSim.tsx        Interactive geofence sim (+4°F radiant zone projection)
     │   ├── ComplianceExportBar.tsx   CSV download + PDF print-report export (zero deps)
@@ -181,7 +181,7 @@ pytest                 # 106 tests — scoring math, dispatch gate, rate limits,
 
 With **no keys at all**: select **Thermal, CA** → the pipeline streams end-to-end via
 Tier 5, the thermal field renders from the labeled climate-normal synthesizer, the map
-blends CRITICAL crimson over CARTO Dark streets, the Response Gap shows ~8.1/10, and
+blends CRITICAL crimson over darkened OpenStreetMap streets, the Response Gap shows ~8.1/10, and
 the **Autonomous Dispatch Log** fires 4 dry-run SMS+voice records with full previews.
 Add Twilio creds + supervisor numbers in `.env` and the same click goes LIVE.
 
@@ -210,9 +210,9 @@ See `backend/.env.example`. Highlights:
 
 ## Map & data attribution
 
-Base map tiles © [CARTO](https://carto.com/attributions), data ©
-[OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (Dark Matter
-raster style). Thermal field values are FortyGuard observations or the clearly-labeled
+Base map tiles © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+(public raster, darkened locally via a canvas filter — no API key, no watermark).
+Thermal field values are FortyGuard observations or the clearly-labeled
 deterministic climate-normal simulation — provenance is always on-screen.
 
 ## Judging alignment

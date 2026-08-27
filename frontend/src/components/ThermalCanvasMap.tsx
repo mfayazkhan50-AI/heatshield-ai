@@ -12,8 +12,9 @@ import type { HeatCell, HeatmapResultPayload } from "@/lib/types";
  * Layer stack (painted back-to-front into one dpr-aware offscreen raster,
  * then blitted — pan/zoom stays at display refresh rate):
  *
- *   1. CARTO Dark Matter raster base tiles (Web-Mercator slippy scheme,
- *      no SDK/key needed) — streets, highways and labels.
+ *   1. OpenStreetMap raster base tiles (Web-Mercator slippy scheme,
+ *      no SDK/key needed) darkened locally via canvas filter — streets,
+ *      highways and labels, rendered without any watermark overlay.
  *   2. Thermal field overlay in a two-pass blend (see below) so road
  *      geometry, highway names and building vectors stay legible.
  *
@@ -28,7 +29,7 @@ import type { HeatCell, HeatmapResultPayload } from "@/lib/types";
  * Pass 1 — CRITICAL halos painted with `screen` compositing so hot zones
  *          LUMINATE without burying the base map.
  * Pass 2 — full field painted with `multiply` at THERMAL_ALPHA: multiply
- *          keeps dark CARTO street lines / building vectors dark through
+ *          keeps dark street lines / building vectors dark through
  *          the heat fill, and light highway labels stay readable — the
  *          canvas-native equivalent of CSS mix-blend-mode: multiply,
  *          without cross-layer CSS blending cost.
@@ -158,7 +159,13 @@ export default function ThermalCanvasMap({
   );
 
   // ------------------------------------------------------------------
-  // Base tiles — CARTO Dark Matter slippy scheme
+  // Base tiles — OpenStreetMap (no API key, no watermark) filtered to a
+  // dark basemap so the thermal overlay stays readable and on-brand.
+  //
+  // CARTO free CDN tiles were replaced because they now inject an
+  // "API KEY REQUIRED" watermark overlay. OSM's public tiles never
+  // do. We re-derive the dark theme locally via a canvas filter
+  // (invert + hue-rotate + brightness/contrast) in drawBaseTiles.
   // ------------------------------------------------------------------
 
   const requestTile = useCallback((key: string, z: number, x: number, y: number) => {
@@ -185,7 +192,7 @@ export default function ThermalCanvasMap({
       dirtyRef.current = true;
     };
 
-    img.src = `https://${sub}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`;
+    img.src = `https://${sub}.tile.openstreetmap.org/${z}/${x}/${y}.png`;
   }, []);
 
   const drawBaseTiles = useCallback(
@@ -228,8 +235,16 @@ export default function ThermalCanvasMap({
           const py = (ty / nTiles - v.cy) * worldPx + cssH / 2;
 
           if (entry.status === "ready") {
+            // Local dark-theme re-derivation of the light OSM basemap:
+            // invert + hue-rotate picks a near-neutral dark fill and
+            // brightens features so streets/labels read through the
+            // thermal wash. Equivalent to CARTO Dark without watermark.
+            ctx.save();
+            ctx.filter =
+              "invert(1) hue-rotate(18deg) brightness(0.9) contrast(1.05)";
             // Half-pixel overlap hides seam artifacts between tiles.
             ctx.drawImage(entry.img, px, py, tileSize + 0.5, tileSize + 0.5);
+            ctx.restore();
           } else {
             ctx.fillStyle = "#0F1418";
             ctx.fillRect(px, py, tileSize, tileSize);
@@ -319,7 +334,7 @@ export default function ThermalCanvasMap({
       ctx.fillRect(x - cellW / 2, y - cellH / 2, cellW - gapX, cellH - gapY);
     }
 
-    // Pass 2 — full field: `multiply` wash. Dark CARTO linework stays
+    // Pass 2 — full field: `multiply` wash. Dark street linework stays
     // dark through the heat fill; light highway labels remain readable.
     ctx.shadowBlur = 0;
     ctx.globalAlpha = THERMAL_ALPHA;
@@ -615,7 +630,7 @@ export default function ThermalCanvasMap({
       <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 border-b border-hairline bg-panel/85 px-3 py-2 backdrop-blur">
         <span className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-ink-secondary sm:text-xs">
           <Layers size={13} className="text-brand-elevated" />
-          Street-Level Thermal Field · CARTO Dark
+          Street-Level Thermal Field · Dark OpenStreetMap
         </span>
 
         <div className="flex items-center gap-2 font-mono text-[10px] text-ink-muted">
@@ -705,7 +720,7 @@ export default function ThermalCanvasMap({
         ))}
       </div>
 
-      {/* Attribution + connectivity status (CARTO/OSM terms) */}
+      {/* Attribution + connectivity status (OSM terms) */}
       <div className="absolute bottom-3 right-3 z-20 flex flex-col items-end gap-1">
         {offline && (
           <span className="rounded border border-hairline bg-panel/85 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-thermal-caution backdrop-blur">
@@ -713,7 +728,7 @@ export default function ThermalCanvasMap({
           </span>
         )}
         <span className="rounded bg-black/50 px-1.5 py-0.5 font-mono text-[8px] text-ink-muted backdrop-blur">
-          © OpenStreetMap contributors © CARTO
+          Map data © OpenStreetMap contributors
         </span>
       </div>
     </div>
