@@ -427,6 +427,9 @@ export default function Home() {
                 <span className="mr-2 inline-block h-1.5 w-1.5 animate-pulse_soft rounded-full bg-brand-elevated align-middle" />
                 polling FortyGuard — attempt {heat.progress.attempt}/
                 {heat.progress.max}
+                {heat.progress.pct !== undefined
+                  ? ` (${heat.progress.pct.toFixed(0)}%)`
+                  : ""}
                 {" · "}
                 {(heat.progress.elapsed_ms / 1000).toFixed(1)}s elapsed
               </div>

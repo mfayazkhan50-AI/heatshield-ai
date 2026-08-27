@@ -177,6 +177,7 @@ export interface PollProgress {
   status: "polling";
   attempt: number;
   max: number;
+  pct?: number;
   elapsed_ms: number;
   deadline_s?: number;
 }

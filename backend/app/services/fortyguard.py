@@ -308,6 +308,12 @@ async def _poll_env_result(
     started = time.perf_counter()
     attempt = 0
 
+    # Honest poll budget: the loop is time-bounded by `total_deadline_s`, not
+    # an arbitrary 100. Derive the effective max polls from the deadline and
+    # the poll interval so the streamed counter can genuinely reach 100%.
+    poll_interval = ENV_POLL_INTERVAL_S
+    max_polls = max(1, int(total_deadline_s / poll_interval) + 1)
+
     while True:
         elapsed = time.perf_counter() - started
         if elapsed >= total_deadline_s:
@@ -316,13 +322,15 @@ async def _poll_env_result(
             )
 
         attempt += 1
+        pct = min(100.0, round(attempt / max_polls * 100.0, 1))
         if on_progress is not None:
             await _maybe_await(
                 on_progress(
                     {
                         "status": "polling",
                         "attempt": attempt,
-                        "max": 100,
+                        "max": max_polls,
+                        "pct": pct,
                         "elapsed_ms": round(elapsed * 1000.0, 1),
                         "deadline_s": total_deadline_s,
                         "phase": "env_params",
