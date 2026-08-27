@@ -22,7 +22,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 # Deterministic, key-free environment — MUST be configured before any
-# test imports app.main (module-level reads).
+# test imports app.main (module-level reads). We set empty strings (NOT pop)
+# so that `load_dotenv()` in app/main.py cannot re-inject the real keys from
+# backend/.env at import time (load_dotenv won't override existing keys).
 os.environ["CHECKPOINT_DB_PATH"] = ":memory:"
 os.environ["OBSERVATION_CACHE_PATH"] = ":memory:"
 os.environ["AGENT_NODE_PACE_SECONDS"] = "0"
@@ -36,7 +38,7 @@ for _key in (
     "TWILIO_AUTH_TOKEN",
     "TWILIO_FROM_NUMBER",
 ):
-    os.environ.pop(_key, None)
+    os.environ[_key] = ""
 
 
 @pytest_asyncio.fixture

@@ -163,7 +163,7 @@ async def _stream_events(
         await progress_queue.put(event)
 
     poll_task = asyncio.create_task(
-        _drain_poll(lat=req.latitude, lon=req.longitude, on_progress=on_progress)
+        _drain_live(lat=req.latitude, lon=req.longitude, on_progress=on_progress)
     )
 
     while True:
@@ -296,11 +296,26 @@ def ObservationKey(req: HeatmapRequest) -> str:
     )
 
 
-async def _drain_poll(
+async def _drain_live(
     lat: float,
     lon: float,
     on_progress,
 ):
+    """
+    Try REAL street-level conditions first via the task-based env_params
+    client (same progress callback so the NDJSON stream reports attempts),
+    then fall back to the legacy poll loop. Returns (frame, meta) where
+    meta carries a 'reason' for the fallback taxonomy.
+    """
+    # Primary: real FortyGuard live env_params (source becomes "live").
+    frame, err = await fortyguard.fetch_live_env_params(
+        lat, lon, on_progress=on_progress
+    )
+    if frame is not None:
+        meta: Dict[str, str] = {"reason": "ok", "attempts": 1}
+        return frame, meta
+
+    # Fallback: legacy grid poll (kept for backward-compat/tests).
     last_frame = None
     last_meta = None
 
@@ -425,6 +440,10 @@ async def heatmap(
 
 
 async def _drain_poll_simple(lat: float, lon: float):
+    frame, err = await fortyguard.fetch_live_env_params(lat, lon)
+    if frame is not None:
+        return frame, {"reason": "ok"}
+
     last_frame = None
     last_meta = None
 
