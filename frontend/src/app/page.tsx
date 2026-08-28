@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { MapPin, PlayCircle, RefreshCw, Zap } from "lucide-react";
 
@@ -66,14 +66,30 @@ export default function Home() {
     provider?: LlmProvider;
     key?: string;
   }>({});
-  // The thermal-field stream only fires when explicitly triggered (Run).
-  // Selecting a city/operation updates the UI alone; it does NOT re-run.
+  // The thermal-field stream fires on initial page load (auto) and whenever
+  // the agent completes a run. Selecting a city/operation updates the UI
+  // alone; it does NOT re-run until Run is pressed.
   const [runHeatRequest, setRunHeatRequest] = useState<{
     location_name: string;
     latitude: number;
     longitude: number;
     operation_context: OperationContext;
   } | null>(null);
+
+  // On first load, auto-fire the thermal-field stream for the default site
+  // so the map renders immediately (no Run needed for the initial view).
+  // This runs exactly once — later city/operation changes stay manual.
+  const bootedRef = useRef(false);
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    setRunHeatRequest({
+      location_name: DEMO_SITES[0].name,
+      latitude: DEMO_SITES[0].lat,
+      longitude: DEMO_SITES[0].lon,
+      operation_context: "construction",
+    });
+  }, []);
 
   /**
    * Capture the EXACT request parameters at trigger time. This object is
