@@ -3,11 +3,21 @@
 **Autonomous Heat Intelligence & OSHA Compliance for Outdoor Worksites**
 Built for the FortyGuard Global AI Hackathon '26 — Track 06 (Agentic AI) × Track 03 (Industrial & Enterprise Automation)
 
-![status](https://img.shields.io/badge/tests-112%2F112-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
+![status](https://img.shields.io/badge/tests-111%2F111-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
 
 ## 🔴 Live Demo
 
-> **Private repository — links withheld until submission.**
+> **Try it now — both services are live.**
+
+| Frontend | Backend API |
+|---|---|
+| [heatshield-ai.vercel.app](https://heatshield-ai.vercel.app) | [heatshield-ai.up.railway.app](https://heatshield-ai.up.railway.app) |
+
+- Frontend: command console — pick a site & operation, press **Run Heat Intelligence Agent**.
+- Backend health check: `GET /api/health` → `{"status":"ok"}`.
+- **Demo scenario:** select **Thermal, CA + Roadwork** and Run → real live FortyGuard
+  data, `CRITICAL` `R≈8.1`, and the Autonomous Dispatch Log fires 4 dry-run SMS + voice
+  previews.
 
 ## The pitch
 
@@ -173,7 +183,7 @@ if the backend isn't on `localhost:8000`.
 
 ```bash
 cd backend
-pytest                 # 112 tests — scoring math, dispatch gate, rate limits,
+pytest                 # 111 tests — scoring math, dispatch gate, rate limits,
                        # schemas, NDJSON contract, live env_params client, SSE runs
 ```
 
@@ -226,7 +236,7 @@ deterministic climate-normal simulation — provenance is always on-screen.
 - **Impact & Relevance (40%)** — turns a metro forecast into a per-site, per-shift
   action plan with autonomous escalation to humans.
 - **Technical Execution (35%)** — real LangGraph StateGraph + checkpointing,
-  deterministic scoring core, dual streaming protocols, 106-test regression suite.
+  deterministic scoring core, dual streaming protocols, 111-test regression suite.
 - **Innovation (15%)** — the 5-tier cascade and honest-degradation design turn
   hackathon infrastructure fragility into a demoed product feature; the dispatch gate
   makes the agent close the loop in the physical world.

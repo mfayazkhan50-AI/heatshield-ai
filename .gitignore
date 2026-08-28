@@ -13,6 +13,12 @@ frontend/.next/
 frontend/out/
 frontend/.env
 frontend/.env*.local
+# Auto-generated / build artifacts (regenerated on every tsc/next run)
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo
+
+# Local demo recordings — not part of the submission repo
+Demo/
 
 # Universal secret safety net (koi bhi .env kahin bhi na jaye)
 .env
