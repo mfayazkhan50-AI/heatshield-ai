@@ -66,6 +66,14 @@ export default function Home() {
     provider?: LlmProvider;
     key?: string;
   }>({});
+  // The thermal-field stream only fires when explicitly triggered (Run).
+  // Selecting a city/operation updates the UI alone; it does NOT re-run.
+  const [runHeatRequest, setRunHeatRequest] = useState<{
+    location_name: string;
+    latitude: number;
+    longitude: number;
+    operation_context: OperationContext;
+  } | null>(null);
 
   /**
    * Capture the EXACT request parameters at trigger time. This object is
@@ -91,20 +99,12 @@ export default function Home() {
   );
 
   // -------------------------------------------------------------------
-  // NDJSON thermal-field stream (Pillar 2) — auto-runs per site/op.
+  // NDJSON thermal-field stream (Pillar 2) — runs only on explicit Run.
+  // The request body is captured at trigger time so selecting a city or
+  // operation never fires the stream on its own.
   // -------------------------------------------------------------------
 
-  const heatmapRequest = useMemo(
-    () => ({
-      location_name: site.name,
-      latitude: site.lat,
-      longitude: site.lon,
-      operation_context: operation,
-    }),
-    [site.name, site.lat, site.lon, operation]
-  );
-
-  const heat = useHeatmapStream({ apiBaseUrl: API_BASE_URL, request: heatmapRequest });
+  const heat = useHeatmapStream({ apiBaseUrl: API_BASE_URL, request: runHeatRequest });
   const heatBusy = heat.conn === "connecting" || heat.conn === "streaming";
 
   // -------------------------------------------------------------------
@@ -133,45 +133,63 @@ export default function Home() {
     onComplete: handleComplete,
   });
 
-  /** Selecting a preset: hydrate from cache instantly, else fetch fresh. */
+  /** Selecting a preset: hydrate from cache instantly if available, else
+   *  just select the site. The agent/heatmap run ONLY when the user
+   *  presses Run — switching never auto-triggers a fresh analysis. */
   function selectSite(next: Site) {
     if (next.name === site.name) return;
 
     setSite(next);
+    setOperation("construction");
 
     // Clear the previous location's gauge/cards before anything renders.
     setHydratedKey(null);
     setActiveRequest(null);
+    setRunHeatRequest(null);
 
     const cached = locationCache[next.name];
     if (cached) {
       // Instant switch — render cached trace + cards, no SSE re-run.
       setHydratedKey(next.name);
-    } else {
-      // Fresh fetch with the NEW location's exact parameters.
-      setActiveRequest(buildRequest(next));
     }
+    // No cache? Leave idle — the user presses Run to analyse this site.
   }
 
-  /** Force a live re-run for the active site (also refreshes the cache). */
+  /** Force a live re-run for the SELECTED site + operation. */
   function triggerRun() {
     setHydratedKey(null);
-    setActiveRequest(buildRequest());
+    // Capture the current selection exactly and fire both streams together.
+    setActiveRequest(buildRequest(site, operation, byok));
+    setRunHeatRequest({
+      location_name: site.name,
+      latitude: site.lat,
+      longitude: site.lon,
+      operation_context: operation,
+    });
   }
 
   function handleOperationChange(op: OperationContext) {
     if (op === operation) return;
+    // Update the selector only — no auto-run. Press Run to re-analyse.
     setOperation(op);
     setHydratedKey(null);
-    // Re-run both streams against the new operation profile.
-    setActiveRequest(buildRequest(site, op));
+    setActiveRequest(null);
+    setRunHeatRequest(null);
   }
 
   function handleBYOKSubmit(provider: LlmProvider, key: string) {
     const creds = { provider, key };
     setByok(creds);
+    // Submitting a BYOK token is an explicit action — run immediately,
+    // passing the freshly-submitted credentials to this run.
     setHydratedKey(null);
     setActiveRequest(buildRequest(site, operation, creds));
+    setRunHeatRequest({
+      location_name: site.name,
+      latitude: site.lat,
+      longitude: site.lon,
+      operation_context: operation,
+    });
   }
 
   const cachedRun = hydratedKey ? locationCache[hydratedKey] : undefined;
