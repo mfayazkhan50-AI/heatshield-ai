@@ -152,9 +152,14 @@ class TestCacheBehavior:
         assert len(cache_events) == 1
         assert cache_events[0]["hit"] is True
 
-        # Cached replay ends immediately with a result (no cells re-streamed).
+        # Cached replay returns immediately with a result AND re-streams the
+        # persisted grid (cells live in their own NDJSON frames, so a cache
+        # hit that skips the live path must still hand the canvas its tiles).
         assert events2[-1]["type"] == "result"
-        assert not any(e["type"] == "cells" for e in events2)
+        cells_events = [e for e in events2 if e["type"] == "cells"]
+        assert len(cells_events) >= 1
+        assert cells_events[0]["chunk"] == 0
+        assert len(cells_events[0]["cells"]) > 0
 
     def test_force_refresh_bypasses_cache(self, client_no_lifespan):
         body = {

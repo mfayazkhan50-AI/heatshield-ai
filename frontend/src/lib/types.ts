@@ -171,6 +171,7 @@ export interface HeatmapResultPayload {
   generated_at: string;
   cache?: { hit: boolean; lookup_ms?: number };
   latency_ms?: number;
+  cells?: HeatCell[];
 }
 
 export interface PollProgress {

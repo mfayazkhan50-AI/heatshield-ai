@@ -165,6 +165,10 @@ export function useHeatmapStream({
               const payload = event.payload as HeatmapResultPayload;
               setState((prev) => ({
                 ...prev,
+                cells:
+                  payload.cells && payload.cells.length
+                    ? payload.cells
+                    : prev.cells,
                 payload,
                 latencyMs: Math.round(performance.now() - startedAt),
               }));

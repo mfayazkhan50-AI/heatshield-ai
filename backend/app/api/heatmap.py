@@ -148,6 +148,27 @@ async def _stream_events(
                     "lookup_ms": cached.get("cache", {}).get("lookup_ms"),
                 }
             )
+            # Re-serve the persisted grid so the canvas paints even on a
+            # cache hit (cells live in their own NDJSON frames, so a hit
+            # that skipped the live path must stream them too).
+            stored_cells = cached.get("cells") or []
+            for chunk_idx in range(
+                max(1, (len(stored_cells) + GRID_CHUNK_SIZE - 1) // GRID_CHUNK_SIZE)
+            ):
+                start = chunk_idx * GRID_CHUNK_SIZE
+                yield _line(
+                    {
+                        "type": "cells",
+                        "chunk": chunk_idx,
+                        "of": max(
+                            1,
+                            (len(stored_cells) + GRID_CHUNK_SIZE - 1)
+                            // GRID_CHUNK_SIZE,
+                        ),
+                        "cells": stored_cells[start : start + GRID_CHUNK_SIZE],
+                    }
+                )
+                await asyncio.sleep(0)
             yield _line({"type": "result", "payload": cached})
             return
 
@@ -276,7 +297,11 @@ async def _stream_events(
         "generated_at": utc_now_iso(),
     }
 
-    await asyncio.to_thread(cache.put, cache_key, payload)
+    # Persist the grid so a later cache-hit can re-serve the exact tiles
+    # without re-running the live poll (see the cache-hit branch below).
+    payload_with_cells = {**payload, "cells": cells}
+
+    await asyncio.to_thread(cache.put, cache_key, payload_with_cells)
 
     yield _line({"type": "result", "payload": payload})
 

@@ -36,6 +36,10 @@ from app.services.climate_normals import (
 )
 from app.services.dispatch import dispatch_critical_alerts
 from app.services.llm_router import execute_resilient_llm
+from app.services.observation_cache import (
+    ObservationCache,
+    get_observation_cache,
+)
 from app.state import VALID_RISK_LEVELS, AgentState
 from app.utils.clock import utc_now_iso
 
@@ -148,6 +152,35 @@ async def ingest_environmental_data(
             "cooling_center_buffer_km": normal["cooling_center_buffer_km"],
             "shade_coverage_pct": normal["shade_coverage_pct"],
         }
+
+        # Share this fresh live observation with the thermal-field map so it
+        # renders instantly from the agent's fetch instead of competing with a
+        # second live FortyGuard poll (which would double API load and slow the
+        # whole pipeline). Keyed the same way the /api/heatmap route looks up.
+        try:
+            cache_key = ObservationCache.build_key(lat, lon, operation, 24)
+            cache_obs = get_observation_cache()
+            cache_obs.put(
+                cache_key,
+                {
+                    "activity_id": activity_id,
+                    "location_name": location_name,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "operation_context": operation,
+                    "source": frame.get("source", "live"),
+                    "provenance": frame.get("provenance"),
+                    "observed_at": frame.get("observed_at"),
+                    "peak_temp_f": grid["peak_temp_f"],
+                    "peak_temp_c": grid["peak_temp_c"],
+                    "critical_cells": grid["critical_cells"],
+                    "tile_count": grid["tile_count"],
+                    "consecutive_hours_above_40c": hours_est,
+                    "cells": grid["cells"],
+                },
+            )
+        except Exception:
+            logger.exception("Could not share live observation with map cache")
     else:
         simulated = synthesize_simulated_field(
             location_name=location_name,

@@ -125,6 +125,17 @@ export default function Home() {
         completedAt: new Date().toISOString(),
       },
     }));
+    // The agent is the single owner of the live FortyGuard fetch and has now
+    // written a fresh observation into the shared map cache. Trigger the map
+    // ONLY here, so it renders instantly from that observation instead of
+    // competing with a second live poll (avoids the awkward first-refresh and
+    // the slowness that came from two concurrent env_params tasks).
+    setRunHeatRequest({
+      location_name: summary.params.location_name,
+      latitude: summary.params.latitude,
+      longitude: summary.params.longitude,
+      operation_context: summary.params.operation_context,
+    });
   }, []);
 
   const stream = useAgentStream({
@@ -158,14 +169,10 @@ export default function Home() {
   /** Force a live re-run for the SELECTED site + operation. */
   function triggerRun() {
     setHydratedKey(null);
-    // Capture the current selection exactly and fire both streams together.
+    // Fire the AGENT only. The map is triggered on agent completion (in
+    // handleComplete) so it reuses the agent's freshly-fetched observation
+    // instead of doing a competing live poll — no double API load, no lag.
     setActiveRequest(buildRequest(site, operation, byok));
-    setRunHeatRequest({
-      location_name: site.name,
-      latitude: site.lat,
-      longitude: site.lon,
-      operation_context: operation,
-    });
   }
 
   function handleOperationChange(op: OperationContext) {
@@ -184,12 +191,6 @@ export default function Home() {
     // passing the freshly-submitted credentials to this run.
     setHydratedKey(null);
     setActiveRequest(buildRequest(site, operation, creds));
-    setRunHeatRequest({
-      location_name: site.name,
-      latitude: site.lat,
-      longitude: site.lon,
-      operation_context: operation,
-    });
   }
 
   const cachedRun = hydratedKey ? locationCache[hydratedKey] : undefined;
