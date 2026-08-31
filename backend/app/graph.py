@@ -47,10 +47,15 @@ from langgraph.graph import END, StateGraph
 
 from app.nodes import (
     dispatch_critical_alerts_node,
+    escalate_or_resolve,
     evaluate_heat_risk,
+    execute_intervention,
     format_enterprise_output,
     generate_compliance_plan,
     ingest_environmental_data,
+    plan_intervention,
+    reassess_risk,
+    verify_acknowledgement,
 )
 from app.state import AgentState
 
@@ -58,6 +63,9 @@ logger = logging.getLogger("heatshield.graph")
 
 # ---------------------------------------------------------------------------
 # Canonical node ordering — also used by the SSE stream filter in main.py
+#
+# Base OBSERVE/ASSESS/DISPATCH/REPORT chain is preserved so existing SSE
+# consumers and tests keep working; the closed-loop stage is appended.
 # ---------------------------------------------------------------------------
 
 NODE_NAMES = [
@@ -65,10 +73,16 @@ NODE_NAMES = [
     "evaluate_heat_risk",
     "generate_compliance_plan",
     "dispatch_critical_alerts",
+    "plan_intervention",          # ASSESS + PLAN
+    "execute_intervention",       # ACT
+    "verify_acknowledgement",     # VERIFY
+    "reassess_risk",              # REASSESS
+    "escalate_or_resolve",        # ESCALATE / RESOLVE
     "format_enterprise_output",
 ]
 
 DISPATCH_NODE = "dispatch_critical_alerts"
+PLAN_NODE = "plan_intervention"
 FINAL_NODE = "format_enterprise_output"
 
 NODE_FUNCS = {
@@ -76,18 +90,27 @@ NODE_FUNCS = {
     "evaluate_heat_risk": evaluate_heat_risk,
     "generate_compliance_plan": generate_compliance_plan,
     "dispatch_critical_alerts": dispatch_critical_alerts_node,
+    "plan_intervention": plan_intervention,
+    "execute_intervention": execute_intervention,
+    "verify_acknowledgement": verify_acknowledgement,
+    "reassess_risk": reassess_risk,
+    "escalate_or_resolve": escalate_or_resolve,
     "format_enterprise_output": format_enterprise_output,
 }
 
 
 def route_after_plan(state: AgentState) -> str:
-    """Deterministic dispatch gate: CRITICAL (R >= 7.0) → telephony node."""
+    """Deterministic dispatch gate: CRITICAL (R >= 7.0) → telephony node.
+
+    Both branches converge on the closed-loop stage (plan_intervention),
+    which gracefully handles the non-critical path.
+    """
     breakdown = state.get("risk_breakdown") or {}
 
     if breakdown.get("risk_tier") == "CRITICAL":
         return DISPATCH_NODE
 
-    return FINAL_NODE
+    return PLAN_NODE
 
 
 # ---------------------------------------------------------------------------
@@ -123,11 +146,17 @@ def build_graph(
         route_after_plan,
         {
             DISPATCH_NODE: DISPATCH_NODE,
-            FINAL_NODE: FINAL_NODE,
+            PLAN_NODE: PLAN_NODE,
         },
     )
 
-    builder.add_edge(DISPATCH_NODE, FINAL_NODE)
+    builder.add_edge(DISPATCH_NODE, PLAN_NODE)
+
+    builder.add_edge(PLAN_NODE, "execute_intervention")
+    builder.add_edge("execute_intervention", "verify_acknowledgement")
+    builder.add_edge("verify_acknowledgement", "reassess_risk")
+    builder.add_edge("reassess_risk", "escalate_or_resolve")
+    builder.add_edge("escalate_or_resolve", FINAL_NODE)
     builder.add_edge(FINAL_NODE, END)
 
     return builder.compile(checkpointer=checkpointer)

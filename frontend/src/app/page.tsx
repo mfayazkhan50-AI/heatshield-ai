@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { MapPin, PlayCircle, RefreshCw, Zap } from "lucide-react";
 
 import BYOKPrompt from "@/components/BYOKPrompt";
+import ClosedLoopPanel from "@/components/ClosedLoopPanel";
 import ComplianceCards from "@/components/ComplianceCards";
 import DecisionRationale from "@/components/DecisionRationale";
 import DeveloperAuditPayload from "@/components/DeveloperAuditPayload";
@@ -229,6 +230,20 @@ export default function Home() {
   const dispatchMode =
     displayResponse?.dispatch_mode ?? result?.dispatch_mode;
   const awaitingBYOK = displayResponse?.awaiting_byok === true;
+
+  // Closed-loop agent artifacts (double-lookup: top-level result vs nested
+  // enterprise_output, so both live and cached runs resolve them).
+  const incidentId = displayResponse?.incident_id ?? result?.incident_id;
+  const agentOutcome = displayResponse?.agent_outcome ?? result?.agent_outcome;
+  const agentConfidence =
+    displayResponse?.confidence ?? result?.confidence ?? null;
+  const decisionTrace = displayResponse?.decision_trace ?? result?.decision_trace;
+  const agentMetrics =
+    displayResponse?.response_metrics ?? result?.response_metrics ?? null;
+  const agentIncident = displayResponse?.incident ?? null;
+  const interventionSimulations = displayResponse?.intervention_simulations;
+  const selectedIntervention = displayResponse?.selected_intervention;
+  const reassessment = displayResponse?.reassessment;
 
   // Brand status propagation — every accent follows the deterministic tier.
   const brandTier: RiskTier | null = brandTierFrom(breakdown, result?.risk_level);
@@ -504,6 +519,17 @@ export default function Home() {
               actions={tacticalActions}
               dispatchRecords={dispatchRecords}
               dispatchMode={dispatchMode}
+            />
+            <ClosedLoopPanel
+              incidentId={incidentId}
+              agentOutcome={agentOutcome}
+              incident={agentIncident}
+              confidence={agentConfidence}
+              decisionTrace={decisionTrace}
+              simulations={interventionSimulations}
+              selected={selectedIntervention}
+              reassessment={reassessment}
+              metrics={agentMetrics}
             />
           </section>
         </div>

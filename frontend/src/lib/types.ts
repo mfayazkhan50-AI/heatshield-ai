@@ -108,6 +108,12 @@ export interface EnterpriseOutput {
   source: FieldSource;
   provenance?: string | null;
   fallback_reason?: string | null;
+  // Closed-loop agent artifacts (also promoted to AgentResponse top-level)
+  incident_id?: string | null;
+  agent_outcome?: "RESOLVED" | "ESCALATED" | null;
+  confidence?: ConfidenceAssessment | null;
+  decision_trace?: DecisionEntry[];
+  response_metrics?: ResponseMetrics | null;
 }
 
 /** Final SSE `result` event payload, cacheable per site. */
@@ -122,6 +128,103 @@ export interface AgentResponse {
   active_tier: string | null;
   tier_trace: string[];
   node_log: Array<Record<string, unknown>>;
+  // Closed-loop agent artifacts (P0)
+  incident_id?: string | null;
+  agent_outcome?: "RESOLVED" | "ESCALATED" | null;
+  incident?: IncidentSnapshot | null;
+  confidence?: ConfidenceAssessment | null;
+  decision_trace?: DecisionEntry[];
+  intervention_simulations?: InterventionSimulation[];
+  selected_intervention?: InterventionSimulation | null;
+  reassessment?: Reassessment | null;
+  response_metrics?: ResponseMetrics | null;
+}
+
+// ---------------------------------------------------------------------------
+// Closed-loop agent contracts (mirrors backend/app/{engine,services}/P0)
+// ---------------------------------------------------------------------------
+
+export type IncidentState =
+  | "DETECTED" | "ASSESSING" | "PLANNED" | "ACTING"
+  | "WAITING_FOR_ACK" | "ACKNOWLEDGED" | "ACK_TIMED_OUT"
+  | "ESCALATING" | "ESCALATED" | "VERIFYING" | "RESOLVED";
+
+export interface IncidentEntry {
+  state: IncidentState;
+  action: string;
+  detail: string;
+  ts: string;
+}
+
+export interface IncidentSnapshot {
+  incident_id: string;
+  site: string;
+  activity_id: string;
+  state: IncidentState;
+  ack_window_s: number;
+  created_at_iso: string;
+  acknowledged_at_iso?: string | null;
+  acknowledged_by?: string | null;
+  ack_overdue: boolean;
+  escalation_tier: string;
+  escalation_reasons: string[];
+  resolution_note?: string | null;
+  entries: IncidentEntry[];
+}
+
+export interface ConfidenceAssessment {
+  level: "HIGH" | "MODERATE" | "LOW";
+  model: string;
+  source: string;
+  reasons: string[];
+  missing_inputs: string[];
+  is_high_confidence: boolean;
+  note: string;
+}
+
+export interface DecisionEntry {
+  id: string;
+  stage:
+    | "OBSERVE" | "ASSESS" | "PLAN" | "ACT" | "VERIFY"
+    | "REASSESS" | "ESCALATE" | "RESOLVE";
+  action: string;
+  reason: string;
+  strategy: string;
+  confidence: ConfidenceAssessment;
+  state_before: Record<string, unknown>;
+  ts: string;
+}
+
+export interface InterventionSimulation {
+  key: string;
+  title: string;
+  message: string;
+  status: "projected";
+  effective: boolean;
+  before: { response_gap: number; risk_tier: RiskTier };
+  after: { response_gap: number; risk_tier: RiskTier };
+  prospective_delta: number;
+  prospective_improvement: number;
+  projected_inputs: Record<string, number>;
+  resource: { cost: string; eta_min: number; staff: number };
+}
+
+export interface Reassessment {
+  before_response_gap: number;
+  before_risk_tier: RiskTier;
+  after_response_gap: number;
+  after_risk_tier: RiskTier;
+  projected_delta: number;
+  mitigated_below_threshold: boolean;
+  dispatch_threshold: number;
+  projected: boolean;
+}
+
+export interface ResponseMetrics {
+  detect_ms: number | null;
+  assess_ms: number | null;
+  plan_ms: number | null;
+  detect_to_act_ms: number | null;
 }
 
 /**

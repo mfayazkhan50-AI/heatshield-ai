@@ -3,7 +3,7 @@
 **Autonomous Heat Intelligence & OSHA Compliance for Outdoor Worksites**
 Built for the FortyGuard Global AI Hackathon '26 — Track 06 (Agentic AI) × Track 03 (Industrial & Enterprise Automation)
 
-![status](https://img.shields.io/badge/tests-111%2F111-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
+![status](https://img.shields.io/badge/tests-138%2F138-brightgreen) ![python](https://img.shields.io/badge/python-3.11%2B-blue) ![next](https://img.shields.io/badge/next.js-14-black)
 
 ## 🔴 Live Demo
 
@@ -38,6 +38,14 @@ metro area — not the street corner someone is standing on.
 4. **Prove** — every number on screen is traceable to the scoring engine's audit
    artifact (`formula_substitution`, per-component contributions), streamed live over
    SSE/NDJSON with provenance footers and activity IDs.
+5. **Close the loop** — a bounded, server-authoritative agent loop
+   (`ASSESS→PLAN→ACT→VERIFY→REASSESS→ESCALATE/RESOLVE`) ranks projected
+   interventions with the *same* R engine, records a before/after projection, opens
+   an incident with acknowledgement/escalation state, and attaches a per-stage
+   decision trace + response-metric timing. **It never overclaims:** projections are
+   always labeled `PROJECTED`, low-confidence (simulated) scenes **escalate for human
+   review** rather than claiming resolution, and it will not fake an acknowledgement
+   it never received.
 
 The reasoning layer is wrapped in a **5-tier resilient cascade** so the app **never**
 shows an error screen — under rate limits, missing keys, or dead networks it always
@@ -53,7 +61,7 @@ heatshield-ai/
 │   ├── .env.example                  Structure-only key template (all optional)
 │   └── app/
 │       ├── state.py                  AgentState schema + Pydantic wire contracts
-│       ├── nodes.py                  5 isolated LangGraph node functions
+│       ├── nodes.py                  LangGraph node functions (5-core + closed loop)
 │       ├── graph.py                  StateGraph + conditional dispatch gate + checkpointer
 │       ├── main.py                   FastAPI gateway: SSE /api/stream-agent, cache stats
 │       ├── api/
@@ -61,12 +69,16 @@ heatshield-ai/
 │       │   └── deps.py               Sliding-window rate limiting dependency
 │       ├── engine/
 │       │   ├── scoring.py            ★ Deterministic R = 0.40E + 0.35V + 0.25D engine
-│       │   └── actions.py            Numbered tactical directives (01–06)
+│       │   ├── actions.py            Numbered tactical directives (01–06)
+│       │   ├── interventions.py      ★ Projected before/after intervention simulation
+│       │   ├── confidence.py         ★ Categorical confidence / uncertainty classifier
+│       │   └── audit.py              ★ Audit ids + provenance chain + response metrics
 │       ├── services/
 │       │   ├── fortyguard.py         Polling client w/ progress events + terminal taxonomy
 │       │   ├── climate_normals.py    City climate profiles + deterministic grid synthesizer
 │       │   ├── observation_cache.py  Hot-mirror + SQLite WAL observation cache
 │       │   ├── dispatch.py           Twilio SMS/voice (live | dry-run) telephony
+│       │   ├── incident.py           ★ Incident + ack/escalation state machine
 │       │   ├── llm_router.py         5-tier cascade + multi-provider BYOK transport
 │       │   └── rate_limiter.py       Injectable-clock sliding window limiter
 │       └── utils/
@@ -82,6 +94,8 @@ heatshield-ai/
     │   ├── ComplianceExportBar.tsx   CSV download + PDF print-report export (zero deps)
     │   ├── DecisionRationale.tsx     "Why Flagged?" verbatim formula audit panel
     │   ├── TacticalActions.tsx       Numbered directives + autonomous dispatch log
+    │   ├── ClosedLoopPanel.tsx       ★ Agent Control Tower: incident driver, loop strip,
+    │   │                             before/after projection, Why-This-Action, trace, audit
     │   └── …                         Gauge, pipeline, compliance cards, BYOK, footer
     ├── src/hooks/
     │   ├── useAgentStream.ts         POST-fetch SSE consumer (param capture, no URL leaks)
@@ -97,6 +111,11 @@ heatshield-ai/
 ```
 ingest_environmental_data → evaluate_heat_risk → generate_compliance_plan
         → [dispatch_critical_alerts  only if risk_tier == CRITICAL]
+        → plan_intervention   (ASSESS + PLAN: confidence + projected interventions)
+        → execute_intervention (ACT: apply projected site-model change)
+        → verify_acknowledgement (VERIFY: dispatch/ack reconciliation — no fake acks)
+        → reassess_risk       (REASSESS: re-score under projection, labeled PROJECTED)
+        → escalate_or_resolve (ESCALATE/RESOLVE: bounded, honesty-gated outcome)
         → format_enterprise_output
 ```
 
@@ -138,7 +157,7 @@ rejected cleanly into Tier-5 fallback.
 
 ### Streaming & resilience (backend)
 
-- `POST /api/stream-agent` — SSE: `status → node(start/end)×5 → token* → result → status`,
+- `POST /api/stream-agent` — SSE: `status → node(start/end)×N → token* → result → status`,
   with pacing (`AGENT_NODE_PACE_SECONDS`) so judges can watch the agent think.
 - `POST /api/heatmap?stream=1` — NDJSON progress contract:
   `meta → cache{hit} → progress{attempt,max}* → fallback{reason,message} → cells{chunk}* → result{payload}`.
@@ -153,6 +172,25 @@ rejected cleanly into Tier-5 fallback.
 | **CSV / PDF export** | One-click OSHA compliance log export: CSV (Blob download, Excel/Sheets-ready) and styled print-report PDF via `window.print()`. Zero npm deps. |
 | **Frontend wake-up ping** | Invisible `fetch('/api/health')` on page mount (+ staggered retry) so the Railway/Render backend is live before the user finishes reading the header — eliminates cold-start feel. |
 | **Radiant zone simulation** | Interactive geofence demo button: "Simulate worker entering high radiant zone (+4 °F)". Reuses the production R formula client-side with published weights; shows before/after tier flip + DISPATCH ARMED flash when crossing R ≥ 7.0. Clearly labeled as a projection. |
+
+## Honesty & safety boundaries
+
+HeatShield is an *assistive* decision tool, not a certified compliance
+system — and the UI/API never claim otherwise:
+
+- **OSHA framing, not certification.** The heat-index bins follow NWS/OSHA
+  methodology used to *frame* recommended controls. The product is an aid for
+  supervisors; it is not OSHA-certified compliance software and does not say it is.
+- **Response Gap is our own model.** `R` is a transparent, deterministic prototype
+  index (not a government standard) — every component and weight is on screen.
+- **Projected ≠ observed.** Every intervention simulation and reassessment is tagged
+  `PROJECTED` and is never presented as real-world outcome.
+- **Confidence is categorical.** Provenance-driven (`live`/`cached`/`simulated`),
+  not a fabricated probability.
+- **No fake acknowledgements.** The incident driver reports acks it actually has;
+  otherwise it stays in `WAITING_FOR_ACK`, governed by `HEATSHIELD_ACK_WINDOW_S`.
+- **Low-confidence scenes escalate.** Simulated data reduces confidence → the agent
+  escalates to a human for review instead of declaring a false resolution.
 
 ## Running locally
 
@@ -183,8 +221,9 @@ if the backend isn't on `localhost:8000`.
 
 ```bash
 cd backend
-pytest                 # 111 tests — scoring math, dispatch gate, rate limits,
-                       # schemas, NDJSON contract, live env_params client, SSE runs
+pytest                 # 138 tests — scoring math, dispatch gate, rate limits,
+                       # schemas, NDJSON contract, live env_params client, SSE runs,
+                       # + closed-loop: interventions, confidence, incident/ack/escalation
 ```
 
 ### Demo paths
@@ -212,6 +251,7 @@ See `backend/.env.example`. Highlights:
 | `OBSERVATION_CACHE_PATH` | SQLite cache file (`:memory:` in tests) |
 | `RATE_LIMIT_MAX`, `RATE_LIMIT_WINDOW_S` | API throttling (60/min default) |
 | `FORTYGUARD_*` timeout vars | Live-polling budget before fallback |
+| `HEATSHIELD_ACK_WINDOW_S` | Acknowledgement window before escalation (default 600s) |
 | `HEATSHIELD_SUPERVISOR_CONTACTS` | Comma-separated E.164 alert recipients |
 | `TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER` | Live SMS/voice (blank ⇒ dry-run) |
 
@@ -236,7 +276,7 @@ deterministic climate-normal simulation — provenance is always on-screen.
 - **Impact & Relevance (40%)** — turns a metro forecast into a per-site, per-shift
   action plan with autonomous escalation to humans.
 - **Technical Execution (35%)** — real LangGraph StateGraph + checkpointing,
-  deterministic scoring core, dual streaming protocols, 111-test regression suite.
+  deterministic scoring core, dual streaming protocols, 138-test regression suite.
 - **Innovation (15%)** — the 5-tier cascade and honest-degradation design turn
   hackathon infrastructure fragility into a demoed product feature; the dispatch gate
   makes the agent close the loop in the physical world.

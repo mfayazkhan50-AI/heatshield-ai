@@ -24,10 +24,22 @@ import uuid
 from typing import Any, Dict, List
 
 from app.engine.actions import build_tactical_actions
+from app.engine.audit import (
+    decision_entry,
+    incident_id as _new_incident_id,
+    response_metrics,
+)
+from app.engine.confidence import classify_confidence
+from app.engine.interventions import (
+    select_best_intervention,
+    simulate_all_interventions,
+)
 from app.engine.scoring import (
+    DISPATCH_THRESHOLD,
     osha_bin_for_heat_index,
     score_response_gap,
 )
+from app.services.incident import open_incident
 from app.services import fortyguard
 from app.services.climate_normals import (
     build_micro_grid,
@@ -454,6 +466,12 @@ async def format_enterprise_output(
         ),
         "provenance": frame.get("provenance"),
         "fallback_reason": frame.get("fallback_reason"),
+        # Closed-loop agent artifacts (present when the loop ran)
+        "incident_id": state.get("incident_id"),
+        "agent_outcome": state.get("agent_outcome"),
+        "confidence": state.get("confidence"),
+        "decision_trace": state.get("decision_trace", []),
+        "response_metrics": state.get("response_metrics"),
     }
 
     log.append(
@@ -465,6 +483,411 @@ async def format_enterprise_output(
 
     return {
         "enterprise_output": output,
+        "node_log": log,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Closed-loop agent nodes (P0)
+#
+# OBSERVE (ingest/evaluate) -> ASSESS/PLAN (plan_intervention) ->
+# ACT (execute_intervention) -> VERIFY (verify_acknowledgement) ->
+# REASSESS (reassess_risk) -> ESCALATE/RESOLVE (escalate_or_resolve)
+# ---------------------------------------------------------------------------
+
+def _decision_confidence(state: AgentState) -> Dict[str, Any]:
+    return classify_confidence(
+        source=(
+            state.get("fortyguard_data", {}).get("source")
+            or "simulated"
+        ),
+        breakdown=state.get("risk_breakdown", {}),
+    )
+
+
+def _projected_inputs_for(breakdown: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    """
+    Reconstruct the deterministic R inputs for response-gap re-scoring.
+    Mirrors engine.interventions so the reassess node can compute the
+    post-intervention projected gap without importing private helpers.
+    """
+    raw = breakdown.get("raw_inputs") or {}
+    return {
+        "peak_temp_f": float(raw.get("peak_temp_f", 90.0)),
+        "relative_humidity_pct": float(raw.get("relative_humidity_pct", 30.0)),
+        "heat_index_f": float(raw.get("heat_index_f", raw.get("peak_temp_f", 90.0))),
+        "consecutive_hours_above_40c": float(
+            raw.get("consecutive_hours_above_40c", 0.0)
+        ),
+        "svi": float(raw.get("svi", 0.5)),
+        "population_density_per_km2": float(
+            raw.get("population_density_per_km2", 1000)
+        ),
+        "cooling_center_buffer_km": float(
+            raw.get("cooling_center_buffer_km", 3.0)
+        ),
+        "shade_coverage_pct": float(raw.get("shade_coverage_pct", 25.0)),
+        "operation": str(raw.get("operation", "construction")),
+    }
+
+
+async def plan_intervention(state: AgentState) -> Dict[str, Any]:
+    """ASSESS + PLAN: open the incident, rank projected interventions."""
+    log: List[Dict[str, Any]] = list(state.get("node_log", []))
+    breakdown = state.get("risk_breakdown", {})
+
+    confidence = _decision_confidence(state)
+
+    simulations = simulate_all_interventions(breakdown)
+    selected = select_best_intervention(breakdown)
+
+    site = state.get("location_name", "Unknown Site")
+    activity_id = state.get("activity_id", "unknown")
+    incident_id = state.get("incident_id") or _new_incident_id(activity_id)
+
+    inc = open_incident(
+        site=site,
+        activity_id=activity_id,
+        incident_id=incident_id,
+    )
+    inc.assess("deterministic response-gap scored")
+    inc.plan(f"top projected intervention: {selected['key'] if selected else 'none'}")
+
+    trace: List[Dict[str, Any]] = list(state.get("decision_trace", []))
+    trace.append(
+        decision_entry(
+            stage="ASSESS",
+            action="classify attribution + confidence",
+            reason=(
+                f"confidence={confidence['level']}; "
+                f"{len(simulations)} interventions simulated"
+            ),
+            strategy="deterministic",
+            confidence=confidence,
+            state_before={"risk_tier": breakdown.get("risk_tier")},
+        )
+    )
+
+    if selected:
+        trace.append(
+            decision_entry(
+                stage="PLAN",
+                action=f"select intervention {selected['key']}",
+                reason=(
+                    f"projected delta R {selected['prospective_delta']:+.2f} "
+                    f"({selected['before']['risk_tier']} -> "
+                    f"{selected['after']['risk_tier']})"
+                ),
+                strategy="deterministic_projection",
+                confidence=confidence,
+                state_before={"prospective_improvement": selected["prospective_improvement"]},
+            )
+        )
+
+    log.append(
+        _log_node(
+            "plan_intervention",
+            (
+                f"Closed-loop PLAN: confidence {confidence['level']}, "
+                f"{len(simulations)} projected interventions, "
+                f"best={selected['key'] if selected else 'none'}."
+            ),
+        )
+    )
+
+    return {
+        "confidence": confidence,
+        "intervention_simulations": simulations,
+        "selected_intervention": selected,
+        "incident_id": incident_id,
+        "incident": inc.to_dict(),
+        "decision_trace": trace,
+        "node_log": log,
+    }
+
+
+async def execute_intervention(state: AgentState) -> Dict[str, Any]:
+    """ACT: execute the selected (projected) intervention on the site model."""
+    log: List[Dict[str, Any]] = list(state.get("node_log", []))
+    breakdown = state.get("risk_breakdown", {})
+    selected = state.get("selected_intervention")
+
+    dispatch_mode = state.get("dispatch_mode", "not_triggered")
+    tier = breakdown.get("risk_tier")
+
+    executed = None
+    trace: List[Dict[str, Any]] = list(state.get("decision_trace", []))
+
+    # Carry forward the incident snapshot (plan_intervention ran first).
+    inc = state.get("incident", {})
+    inc_entries: List[Dict[str, Any]] = list(inc.get("entries", []))
+    inc_state = inc.get("state")
+
+    if selected and tier in ("ELEVATED", "HIGH", "CRITICAL"):
+        executed = dict(selected)
+        executed["effective"] = False  # PROJECTED until verified
+        executed["executed_at"] = utc_now_iso()
+        inc_state = "ACTING"
+        inc_entries.append(
+            {
+                "state": "ACTING",
+                "action": "intervention executed",
+                "detail": f"{selected['key']} (R {selected['before']['response_gap']} -> {selected['after']['response_gap']}, PROJECTED)",
+                "ts": utc_now_iso(),
+            }
+        )
+        trace.append(
+            decision_entry(
+                stage="ACT",
+                action=f"execute {selected['key']}",
+                reason="apply projected intervention to the operative site model",
+                strategy="deterministic_projection",
+                confidence=state.get("confidence", {}),
+                state_before={"dispatch_mode": dispatch_mode},
+            )
+        )
+        log.append(
+            _log_node(
+                "execute_intervention",
+                (
+                    f"EXECUTED projection: {selected['key']} "
+                    f"(R {selected['before']['response_gap']} -> "
+                    f"{selected['after']['response_gap']}, PROJECTED)."
+                ),
+            )
+        )
+    else:
+        log.append(
+            _log_node(
+                "execute_intervention",
+                "No intervention executed (no applicable tier or no projection).",
+            )
+        )
+
+    inc["entries"] = inc_entries
+    if inc_state is not None:
+        inc["state"] = inc_state
+
+    return {
+        "executed_action": executed,
+        "incident": inc,
+        "decision_trace": trace,
+        "node_log": log,
+    }
+
+
+async def verify_acknowledgement(state: AgentState) -> Dict[str, Any]:
+    """VERIFY: reconcile dispatch + acknowledgement state honestly.
+
+    We NEVER claim a real-world acknowledgement we did not receive. When a
+    dispatch happened we move the incident to WAITING_FOR_ACK and record that
+    real ack is pending (window-configured). When none was needed we proceed
+    straight to verification.
+    """
+    log: List[Dict[str, Any]] = list(state.get("node_log", []))
+    dispatch_mode = state.get("dispatch_mode", "not_triggered")
+    tier = (state.get("risk_breakdown") or {}).get("risk_tier")
+
+    inc = dict(state.get("incident", {}))
+    inc_state = inc.get("state", "PLANNED")
+    inc_entries: List[Dict[str, Any]] = list(inc.get("entries", []))
+
+    if dispatch_mode in ("live", "dry_run") and tier == CRITICAL_TIER:
+        if inc_state == "PLANNED":
+            inc_state = "WAITING_FOR_ACK"
+    elif inc_state == "PLANNED":
+        # no dispatch needed -> nothing to ack; mark verifying
+        inc_state = "VERIFYING"
+
+    inc_entries.append(
+        {
+            "state": inc_state,
+            "action": "verification checkpoint",
+            "detail": f"dispatch_mode={dispatch_mode}",
+            "ts": utc_now_iso(),
+        }
+    )
+    inc["state"] = inc_state
+    inc["entries"] = inc_entries
+
+    log.append(
+        _log_node(
+            "verify_acknowledgement",
+            (
+                f"VERIFY: dispatch_mode={dispatch_mode}; incident state "
+                f"{inc_state}. "
+                "Acknowledge/Escalate governed by HEATSHIELD_ACK_WINDOW_S."
+            ),
+        )
+    )
+
+    return {"incident": inc, "node_log": log}
+
+
+async def reassess_risk(state: AgentState) -> Dict[str, Any]:
+    """REASSESS: re-score under the executed projection; label PROJECTED."""
+    log: List[Dict[str, Any]] = list(state.get("node_log", []))
+    breakdown = state.get("risk_breakdown", {})
+    executed = state.get("executed_action")
+
+    inc = dict(state.get("incident", {}))
+    inc_entries: List[Dict[str, Any]] = list(inc.get("entries", []))
+
+    before_gap = float(breakdown.get("response_gap", 0.0))
+    before_tier = breakdown.get("risk_tier", "NORMAL")
+
+    after_gap = before_gap
+    after_tier = before_tier
+    projected_inputs = _projected_inputs_for(breakdown)
+
+    if executed:
+        applied = dict(projected_inputs)
+        sim_inputs = executed.get("projected_inputs")
+        if isinstance(sim_inputs, dict):
+            applied = dict(sim_inputs)
+        after = score_response_gap(**applied)
+        after_gap = float(after["response_gap"])
+        after_tier = after["risk_tier"]
+
+    mitigated = after_gap < DISPATCH_THRESHOLD
+    delta = before_gap - after_gap
+
+    reassessment = {
+        "before_response_gap": round(before_gap, 3),
+        "before_risk_tier": before_tier,
+        "after_response_gap": round(after_gap, 3),
+        "after_risk_tier": after_tier,
+        "projected_delta": round(delta, 3),
+        "mitigated_below_threshold": mitigated,
+        "dispatch_threshold": DISPATCH_THRESHOLD,
+        "projected": True,  # PROVENANCE: never claimed as observed
+    }
+
+    inc_entries.append(
+        {
+            "state": "VERIFYING" if not mitigated else "REASSESSED",
+            "action": "reassessment",
+            "detail": f"R {round(before_gap,2)} -> {round(after_gap,2)}; mitigated={mitigated} (PROJECTED)",
+            "ts": utc_now_iso(),
+        }
+    )
+    inc["entries"] = inc_entries
+
+    trace: List[Dict[str, Any]] = list(state.get("decision_trace", []))
+    trace.append(
+        decision_entry(
+            stage="REASSESS",
+            action="re-score under executed projection",
+            reason=(
+                f"R {round(before_gap,2)} -> {round(after_gap,2)} "
+                f"({'mitigated' if mitigated else 'NOT mitigated'}), PROJECTED"
+            ),
+            strategy="deterministic_projection",
+            confidence=state.get("confidence", {}),
+            state_before={"mitigated_below_threshold": mitigated},
+        )
+    )
+
+    log.append(
+        _log_node(
+            "reassess_risk",
+            (
+                f"REASSESS (PROJECTED): R {round(before_gap,2)} -> "
+                f"{round(after_gap,2)}; mitigated={mitigated}."
+            ),
+        )
+    )
+
+    return {
+        "reassessment": reassessment,
+        "incident": inc,
+        "decision_trace": trace,
+        "node_log": log,
+    }
+
+
+async def escalate_or_resolve(state: AgentState) -> Dict[str, Any]:
+    """ESCALATE/RESOLVE: decide a bounded, honest outcome.
+
+    Honesty rules enforced here:
+      - LOW confidence  -> ESCALATED (never definitive from one pass)
+      - NORMAL tier     -> RESOLVED, no action required
+      - projected mitigated (<| threshold) AND confidence != LOW -> RESOLVED
+      - otherwise        -> ESCALATED (projected mitigation insufficient)
+    """
+    log: List[Dict[str, Any]] = list(state.get("node_log", []))
+    breakdown = state.get("risk_breakdown", {})
+    reassessment = state.get("reassessment", {})
+    confidence = state.get("confidence", {})
+
+    tier = breakdown.get("risk_tier", "NORMAL")
+    mitigated = bool(reassessment.get("mitigated_below_threshold", False))
+    conf_level = confidence.get("level")
+
+    if conf_level == "LOW" and tier != "NORMAL":
+        outcome = "ESCALATED"
+        reason = "low confidence; human review required before claiming resolution"
+    elif tier == "NORMAL":
+        outcome = "RESOLVED"
+        reason = "no elevated risk; no intervention required"
+    elif mitigated:
+        outcome = "RESOLVED"
+        reason = "projected mitigation brings response gap below threshold"
+    else:
+        outcome = "ESCALATED"
+        reason = "projected mitigation insufficient to clear threshold"
+
+    inc = dict(state.get("incident", {}))
+
+    # Derive response-metric timestamps from the incident timeline so the
+    # detect->assess->plan->act delays are meaningful, not fabricated.
+    _ts_by_action = {
+        e.get("action"): e.get("ts")
+        for e in inc.get("entries", [])
+        if e.get("ts")
+    }
+    metrics = response_metrics(
+        detected_at=inc.get("created_at_iso") or _ts_by_action.get("incident opened"),
+        assessed_at=_ts_by_action.get("assessment started"),
+        planned_at=_ts_by_action.get("plan determined"),
+        acted_at=_ts_by_action.get("intervention executed"),
+    )
+
+    if outcome == "RESOLVED":
+        inc["state"] = "RESOLVED"
+        inc["resolution_note"] = reason
+    else:
+        inc["state"] = "ESCALATED"
+        inc["escalation_reasons"] = [reason]
+
+    trace: List[Dict[str, Any]] = list(state.get("decision_trace", []))
+    trace.append(
+        decision_entry(
+            stage="ESCALATE" if outcome == "ESCALATED" else "RESOLVE",
+            action=f"{outcome} - {reason}",
+            reason=reason,
+            strategy="deterministic",
+            confidence=confidence,
+            state_before={
+                "risk_tier": tier,
+                "mitigated_below_threshold": mitigated,
+                "confidence_level": conf_level,
+            },
+        )
+    )
+
+    log.append(
+        _log_node(
+            "escalate_or_resolve",
+            f"AGENT OUTCOME: {outcome} ({reason}).",
+        )
+    )
+
+    return {
+        "incident": inc,
+        "agent_outcome": outcome,
+        "response_metrics": metrics,
+        "decision_trace": trace,
         "node_log": log,
     }
 

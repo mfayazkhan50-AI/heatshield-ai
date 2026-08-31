@@ -116,6 +116,40 @@ class AgentState(TypedDict, total=False):
     # Node-level status log, streamed to the frontend as SSE progress events
     node_log: List[Dict[str, Any]]
 
+    # ------------------------------------------------------------------
+    # Closed-loop agent (P0): OBSERVE->ASSESS->PLAN->ACT->VERIFY->REASSESS
+    # ------------------------------------------------------------------
+
+    # Audit identity: run/incident/decision ids + provenance chain.
+    incident_id: str
+    decision_ids: List[str]
+
+    # Deterministic confidence/uncertainty assessment for this decision.
+    confidence: Dict[str, Any]
+
+    # PLAN stage: projected before/after for every candidate intervention
+    # (deterministic re-scores of the SAME R engine).
+    intervention_simulations: List[Dict[str, Any]]
+    selected_intervention: Dict[str, Any]
+
+    # ACT stage: what the agent actually did + re-scored after-projection.
+    executed_action: Dict[str, Any]
+
+    # Server-authoritative incident lifecycle snapshot (from Incident.to_dict).
+    incident: Dict[str, Any]
+
+    # Immutable decision trace (list of decision_entry records).
+    decision_trace: List[Dict[str, Any]]
+
+    # REASSESS result: before/after gap + whether risk was mitigated.
+    reassessment: Dict[str, Any]
+
+    # Final outcome: RESOLVED when verified below threshold, else ESCALATED.
+    agent_outcome: str
+
+    # Deterministic response-metric delays (ms).
+    response_metrics: Dict[str, Any]
+
 
 # ---------------------------------------------------------------------------
 # API layer models (Pydantic v2) — validate everything crossing the wire

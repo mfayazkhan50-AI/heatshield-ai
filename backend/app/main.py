@@ -397,6 +397,18 @@ async def stream_agent(
                     "active_tier": merged.get("active_tier"),
                     "tier_trace": merged.get("tier_trace", []),
                     "node_log": merged.get("node_log", []),
+                    # Closed-loop agent artifacts
+                    "incident_id": merged.get("incident_id"),
+                    "agent_outcome": merged.get("agent_outcome"),
+                    "incident": merged.get("incident"),
+                    "confidence": merged.get("confidence"),
+                    "decision_trace": merged.get("decision_trace", []),
+                    "intervention_simulations": merged.get(
+                        "intervention_simulations", []
+                    ),
+                    "selected_intervention": merged.get("selected_intervention"),
+                    "reassessment": merged.get("reassessment"),
+                    "response_metrics": merged.get("response_metrics"),
                 },
             )
 
