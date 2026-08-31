@@ -115,7 +115,8 @@ ingest_environmental_data → evaluate_heat_risk → generate_compliance_plan
         → execute_intervention (ACT: apply projected site-model change)
         → verify_acknowledgement (VERIFY: dispatch/ack reconciliation — no fake acks)
         → reassess_risk       (REASSESS: re-score under projection, labeled PROJECTED)
-        → escalate_or_resolve (ESCALATE/RESOLVE: bounded, honesty-gated outcome)
+        → escalate_or_resolve (SETTLE: NO_ACTION_REQUIRED | PROJECTED_RESOLUTION |
+                               ESCALATED — strong RESOLVED reserved for real verification)
         → format_enterprise_output
 ```
 
@@ -184,7 +185,10 @@ system — and the UI/API never claim otherwise:
 - **Response Gap is our own model.** `R` is a transparent, deterministic prototype
   index (not a government standard) — every component and weight is on screen.
 - **Projected ≠ observed.** Every intervention simulation and reassessment is tagged
-  `PROJECTED` and is never presented as real-world outcome.
+  `PROJECTED` and is never presented as real-world outcome. A single-pass run never
+  transitions the incident to a strong `RESOLVED` — a projected mitigation stays in
+  `VERIFYING` and is surfaced as `PROJECTED_RESOLUTION · field verification required`.
+  `VERIFIED` is reserved for a genuinely confirmed outcome (no current path fabricates it).
 - **Confidence is categorical.** Provenance-driven (`live`/`cached`/`simulated`),
   not a fabricated probability.
 - **No fake acknowledgements.** The incident driver reports acks it actually has;

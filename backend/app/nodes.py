@@ -806,14 +806,34 @@ async def reassess_risk(state: AgentState) -> Dict[str, Any]:
     }
 
 
+def incident_state_for_projection(current_state: Any, outcome: str) -> str:
+    """Resolve the incident `state` for a projected (not verified) outcome.
+
+    AVERIFYING semantics are preserved whenever field verification has not
+    actually happened. If a prior path already advanced the incident to a
+    stronger state (e.g. ESCALATED), that is never downgraded here.
+    """
+    if current_state in ("ESCALATED", "RESOLVED"):
+        return current_state
+    if outcome == "NO_ACTION_REQUIRED":
+        return "VERIFYING"  # nothing to verify, but nothing resolved either
+    return "VERIFYING"  # PROJECTED_RESOLUTION -> awaiting field verification
+
+
 async def escalate_or_resolve(state: AgentState) -> Dict[str, Any]:
     """ESCALATE/RESOLVE: decide a bounded, honest outcome.
 
-    Honesty rules enforced here:
-      - LOW confidence  -> ESCALATED (never definitive from one pass)
-      - NORMAL tier     -> RESOLVED, no action required
-      - projected mitigated (<| threshold) AND confidence != LOW -> RESOLVED
-      - otherwise        -> ESCALATED (projected mitigation insufficient)
+    Outcome taxonomy (PROJECTED vs VERIFIED is never fudged):
+      - LOW confidence (and risk exists)     -> ESCALATED (human review)
+      - NORMAL tier (nothing to mitigate)    -> NO_ACTION_REQUIRED
+      - projected below threshold            -> PROJECTED_RESOLUTION
+                                              (FIELD VERIFICATION REQUIRED)
+      - projected still above/not mitigated  -> ESCALATED
+
+    The strong `RESOLVED` incident state is RESERVED for a genuinely
+    verified outcome. This single-pass deterministic loop never claims field
+    verification, so it never transitions the incident to `RESOLVED` — a
+    projected mitigation remains in `VERIFYING` semantics instead.
     """
     log: List[Dict[str, Any]] = list(state.get("node_log", []))
     breakdown = state.get("risk_breakdown", {})
@@ -828,11 +848,11 @@ async def escalate_or_resolve(state: AgentState) -> Dict[str, Any]:
         outcome = "ESCALATED"
         reason = "low confidence; human review required before claiming resolution"
     elif tier == "NORMAL":
-        outcome = "RESOLVED"
+        outcome = "NO_ACTION_REQUIRED"
         reason = "no elevated risk; no intervention required"
     elif mitigated:
-        outcome = "RESOLVED"
-        reason = "projected mitigation brings response gap below threshold"
+        outcome = "PROJECTED_RESOLUTION"
+        reason = "projected mitigation clears threshold — FIELD VERIFICATION REQUIRED"
     else:
         outcome = "ESCALATED"
         reason = "projected mitigation insufficient to clear threshold"
@@ -853,17 +873,20 @@ async def escalate_or_resolve(state: AgentState) -> Dict[str, Any]:
         acted_at=_ts_by_action.get("intervention executed"),
     )
 
-    if outcome == "RESOLVED":
-        inc["state"] = "RESOLVED"
-        inc["resolution_note"] = reason
-    else:
+    if outcome == "ESCALATED":
         inc["state"] = "ESCALATED"
         inc["escalation_reasons"] = [reason]
+    else:
+        # NOT a verified resolution — stay in VERIFYING semantics; the
+        # PROJECTED_RESOLUTION / NO_ACTION_REQUIRED outcome is conveyed via
+        # `agent_outcome`, not a false incident RESOLVED state.
+        inc["state"] = incident_state_for_projection(inc.get("state"), outcome)
+        inc["resolution_note"] = reason
 
     trace: List[Dict[str, Any]] = list(state.get("decision_trace", []))
     trace.append(
         decision_entry(
-            stage="ESCALATE" if outcome == "ESCALATED" else "RESOLVE",
+            stage="ESCALATE" if outcome == "ESCALATED" else "SETTLE",
             action=f"{outcome} - {reason}",
             reason=reason,
             strategy="deterministic",

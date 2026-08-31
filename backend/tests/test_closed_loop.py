@@ -278,12 +278,14 @@ class TestClosedLoopGraph:
                 },
             )
         res = json_result(r)
-        assert res.get("agent_outcome") in ("RESOLVED", "ESCALATED")
+        assert res.get("agent_outcome") in (
+            "NO_ACTION_REQUIRED", "PROJECTED_RESOLUTION", "ESCALATED",
+        )
         assert res.get("incident_id", "").startswith("inc-")
         assert res.get("decision_trace")
         stages = [d["stage"] for d in res["decision_trace"]]
         assert "ASSESS" in stages and "PLAN" in stages and "ACT" in stages
-        assert any(s in ("RESOLVE", "ESCALATE") for s in stages)
+        assert any(s in ("SETTLE", "ESCALATE") for s in stages)
         assert res.get("intervention_simulations")
         assert isinstance(res.get("response_metrics"), dict)
 

@@ -144,7 +144,9 @@ class AgentState(TypedDict, total=False):
     # REASSESS result: before/after gap + whether risk was mitigated.
     reassessment: Dict[str, Any]
 
-    # Final outcome: RESOLVED when verified below threshold, else ESCALATED.
+    # Final honest outcome: NO_ACTION_REQUIRED | PROJECTED_RESOLUTION |
+    # ESCALATED. A strong RESOLVED is reserved for genuine verification and
+    # is never emitted by the single-pass deterministic loop.
     agent_outcome: str
 
     # Deterministic response-metric delays (ms).

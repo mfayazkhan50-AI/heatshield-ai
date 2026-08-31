@@ -110,7 +110,7 @@ export interface EnterpriseOutput {
   fallback_reason?: string | null;
   // Closed-loop agent artifacts (also promoted to AgentResponse top-level)
   incident_id?: string | null;
-  agent_outcome?: "RESOLVED" | "ESCALATED" | null;
+  agent_outcome?: AgentOutcome | null;
   confidence?: ConfidenceAssessment | null;
   decision_trace?: DecisionEntry[];
   response_metrics?: ResponseMetrics | null;
@@ -130,7 +130,7 @@ export interface AgentResponse {
   node_log: Array<Record<string, unknown>>;
   // Closed-loop agent artifacts (P0)
   incident_id?: string | null;
-  agent_outcome?: "RESOLVED" | "ESCALATED" | null;
+  agent_outcome?: AgentOutcome | null;
   incident?: IncidentSnapshot | null;
   confidence?: ConfidenceAssessment | null;
   decision_trace?: DecisionEntry[];
@@ -143,6 +143,17 @@ export interface AgentResponse {
 // ---------------------------------------------------------------------------
 // Closed-loop agent contracts (mirrors backend/app/{engine,services}/P0)
 // ---------------------------------------------------------------------------
+
+/**
+ * Honest closed-loop outcome. `VERIFIED` is RESERVED for a genuinely
+ * field-verified resolution (no backend path emits it yet); everything else
+ * is an explicit projection or an escalation.
+ */
+export type AgentOutcome =
+  | "NO_ACTION_REQUIRED"
+  | "PROJECTED_RESOLUTION"
+  | "ESCALATED"
+  | "VERIFIED";
 
 export type IncidentState =
   | "DETECTED" | "ASSESSING" | "PLANNED" | "ACTING"

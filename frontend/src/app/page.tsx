@@ -505,6 +505,27 @@ export default function Home() {
           {/* COLUMN 3 — Pipeline + Action Plan                         */}
           {/* -------------------------------------------------------- */}
           <section className="col-span-1 flex min-w-0 flex-col gap-4 lg:col-span-5">
+            <ClosedLoopPanel
+              incidentId={incidentId}
+              agentOutcome={agentOutcome}
+              incident={agentIncident}
+              confidence={agentConfidence}
+              decisionTrace={decisionTrace}
+              simulations={interventionSimulations}
+              selected={selectedIntervention}
+              reassessment={reassessment}
+              metrics={agentMetrics}
+              heatIndexF={
+                Number(
+                  heat.payload?.peak_temp_f ??
+                    breakdown?.raw_inputs?.heat_index_f ??
+                    result?.heat_index_f ??
+                    NaN
+                ) || null
+              }
+              riskTier={brandTier}
+              responseGap={breakdown?.response_gap ?? null}
+            />
             <ComplianceExportBar output={result ?? null} />
             <ExecutionPipeline
               nodePhases={displayNodePhases}
@@ -519,17 +540,6 @@ export default function Home() {
               actions={tacticalActions}
               dispatchRecords={dispatchRecords}
               dispatchMode={dispatchMode}
-            />
-            <ClosedLoopPanel
-              incidentId={incidentId}
-              agentOutcome={agentOutcome}
-              incident={agentIncident}
-              confidence={agentConfidence}
-              decisionTrace={decisionTrace}
-              simulations={interventionSimulations}
-              selected={selectedIntervention}
-              reassessment={reassessment}
-              metrics={agentMetrics}
             />
           </section>
         </div>
