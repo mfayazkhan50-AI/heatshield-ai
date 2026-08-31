@@ -250,6 +250,35 @@ export default function Home() {
   const brand = brandTier ? BRAND_STATUS[brandTier] : null;
 
   // -------------------------------------------------------------------
+  // Observed vs adjusted thermal metrics (presentation-only attribution;
+  // every number below is a backend-provided value — no frontend math).
+  //
+  //   observedHeatIndexF = heat_index_f   (#, Rothfusz from observed temp/RH)
+  //   sitePeakF          = peak_temp_f    (observed peak air temp, thermal grid)
+  //   radiantOffsetF     = operation radiant offset (construction +2.0°F)
+  //   adjustedPeakF      = peak_temp_f + radiant_offset_f (drives risk scoring)
+  // -------------------------------------------------------------------
+  const observedHeatIndexF =
+    Number(
+      breakdown?.raw_inputs?.heat_index_f ??
+        heat.payload?.peak_temp_f ??
+        result?.heat_index_f ??
+        NaN
+    ) || null;
+  const sitePeakF =
+    Number(
+      heat.payload?.peak_temp_f ??
+        breakdown?.raw_inputs?.peak_temp_f ??
+        result?.heat_index_f ??
+        NaN
+    ) || null;
+  const radiantOffsetF = Number(breakdown?.operation_profile?.radiant_offset_f) || null;
+  const adjustedPeakF =
+    sitePeakF != null && radiantOffsetF != null
+      ? sitePeakF + radiantOffsetF
+      : sitePeakF;
+
+  // -------------------------------------------------------------------
   // Railway backend wake-up ping — fires the instant the page mounts so
   // the server is live before the user finishes reading the header.
   // A second staggered ping covers the case where the first arrives
@@ -515,14 +544,10 @@ export default function Home() {
               selected={selectedIntervention}
               reassessment={reassessment}
               metrics={agentMetrics}
-              heatIndexF={
-                Number(
-                  heat.payload?.peak_temp_f ??
-                    breakdown?.raw_inputs?.heat_index_f ??
-                    result?.heat_index_f ??
-                    NaN
-                ) || null
-              }
+              observedHeatIndexF={observedHeatIndexF}
+              sitePeakF={sitePeakF}
+              adjustedPeakF={adjustedPeakF}
+              radiantOffsetF={radiantOffsetF}
               riskTier={brandTier}
               responseGap={breakdown?.response_gap ?? null}
             />

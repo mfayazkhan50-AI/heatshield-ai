@@ -28,10 +28,13 @@ export default function DecisionRationale({
       <header className="mb-3 flex items-center gap-2">
         <Sigma size={14} className="text-brand-elevated" />
         <h3 className="font-mono text-[11px] font-semibold uppercase tracking-widest text-ink-secondary">
-          Why Flagged? — Deterministic Audit
+          Why Flagged?
         </h3>
-        <span className="ml-auto rounded border border-brand-elevated/30 bg-brand-elevated/10 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-brand-elevated">
-          engine {breakdown.engine}
+        <span className="rounded border border-brand-elevated/40 bg-brand-elevated/10 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-brand-elevated">
+          DETERMINISTIC AUDIT
+        </span>
+        <span className="ml-auto font-mono text-[9px] uppercase tracking-wide text-ink-muted">
+          engine {breakdown.engine.split("/")[0]}
         </span>
       </header>
 
@@ -58,6 +61,20 @@ export default function DecisionRationale({
         </p>
       </div>
 
+      {/* Weight legend — E / V / D mapping from the backend components */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[10px] text-ink-secondary">
+        <span className="text-ink-muted">R =</span>
+        {breakdown.components.map((c, i) => (
+          <span key={c.key}>
+            <span className="text-brand-elevated">{c.weight.toFixed(2)}</span>×
+            <span className={c.key === "heat_exposure" ? "text-thermal-warning" : c.key === "vulnerability" ? "text-brand-elevated" : "text-ink-primary"}>
+              {c.key === "heat_exposure" ? "E" : c.key === "vulnerability" ? "V" : "D"}
+            </span>
+            {i < breakdown.components.length - 1 ? <span className="ml-0.5">+</span> : null}
+          </span>
+        ))}
+      </div>
+
       {/* Component table */}
       <div className="mt-3 space-y-2.5">
         {breakdown.components.map((c) => (
@@ -65,8 +82,12 @@ export default function DecisionRationale({
         ))}
       </div>
 
+      <p className="mt-3 border-t border-hairline pt-2 font-mono text-[9px] uppercase tracking-wide text-ink-muted">
+        rule engine computes the score · verbatim deterministic audit · no LLM math
+      </p>
+
       {/* Dispatch eligibility line */}
-      <p className="mt-3 font-mono text-[10px] text-ink-muted">
+      <p className="mt-2 font-mono text-[10px] text-ink-muted">
         dispatch_threshold={breakdown.dispatch_threshold.toFixed(1)} ·
         dispatch_eligible=
         <span className={breakdown.dispatch_eligible ? "text-brand-critical" : "text-ink-muted"}>
@@ -79,11 +100,15 @@ export default function DecisionRationale({
 
 function ComponentRow({ component }: { component: ScoreComponent }) {
   const label = COMPONENT_LABELS[component.key] ?? component.label;
+  const letter = component.key === "heat_exposure" ? "E" : component.key === "vulnerability" ? "V" : "D";
 
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2 font-mono text-[11px]">
-        <span className="text-ink-primary">{label}</span>
+        <span className="text-ink-primary">
+          <span className="mr-1 inline-block w-3 text-brand-elevated">{letter}</span>
+          {label}
+        </span>
         <span className="text-ink-muted">
           {component.value.toFixed(2)} ×{" "}
           <span className="text-brand-elevated">{component.weight}</span> ={" "}
